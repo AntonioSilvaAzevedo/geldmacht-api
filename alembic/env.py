@@ -2,14 +2,15 @@ import sys
 from pathlib import Path
 from logging.config import fileConfig
 
-from sqlalchemy import engine_from_config, pool
+from sqlalchemy import create_engine, pool
 from alembic import context
 
 # ── Adiciona o backend ao path para importar os models ───────────────────────
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from app.database import Base  # noqa: E402
-from app.models import Account, Transaction  # noqa: E402, F401 — precisa importar para metadata
+from app.database import Base          # noqa: E402
+from app.config import settings        # noqa: E402
+from app.models import Account, Transaction  # noqa: E402, F401
 
 config = context.config
 if config.config_file_name is not None:
@@ -19,9 +20,8 @@ target_metadata = Base.metadata
 
 
 def run_migrations_offline() -> None:
-    url = config.get_main_option("sqlalchemy.url")
     context.configure(
-        url=url,
+        url=settings.database_url,
         target_metadata=target_metadata,
         literal_binds=True,
         dialect_opts={"paramstyle": "named"},
@@ -31,10 +31,16 @@ def run_migrations_offline() -> None:
 
 
 def run_migrations_online() -> None:
-    connectable = engine_from_config(
-        config.get_section(config.config_ini_section, {}),
-        prefix="sqlalchemy.",
+    # Cria engine diretamente — evita conflito de % com configparser
+    connect_args = (
+        {"check_same_thread": False}
+        if settings.database_url.startswith("sqlite")
+        else {}
+    )
+    connectable = create_engine(
+        settings.database_url,
         poolclass=pool.NullPool,
+        connect_args=connect_args,
     )
     with connectable.connect() as connection:
         context.configure(connection=connection, target_metadata=target_metadata)
