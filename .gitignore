@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.py[cod]
+*.so
+venv/
+env/
+ENV/
+.Python
+
+# Banco local (nunca commitar)
+*.db
+*.sqlite
+
+# Variáveis de ambiente (nunca commitar)
+.env
+
+# IDEs
+.vscode/
+.idea/
+.DS_Store
+
+# Dados sensíveis (extratos reais)
+data/
