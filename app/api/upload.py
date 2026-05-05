@@ -1,6 +1,8 @@
 import logging
-from fastapi import APIRouter, File, HTTPException, UploadFile
+from fastapi import APIRouter, Depends, File, HTTPException, UploadFile
 
+from ..middleware.auth import get_current_user
+from ..models.user import User
 from ..parsers import detect_parser
 from ..schemas.transaction import ParsedTransaction, UploadResponse
 from ..services.summary_service import calculate_invoice_summary
@@ -20,7 +22,10 @@ router = APIRouter()
         "Etapa 2.3 adicionará a confirmação e persistência."
     ),
 )
-async def upload_statement(file: UploadFile = File(...)) -> UploadResponse:
+async def upload_statement(
+    file: UploadFile = File(...),
+    current_user: User = Depends(get_current_user),
+) -> UploadResponse:
     # ── Validação básica ─────────────────────────────────────────────────────
     allowed_types = {
         "application/pdf",

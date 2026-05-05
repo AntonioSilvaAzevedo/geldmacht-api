@@ -14,6 +14,8 @@ from sqlalchemy.orm import Session
 from sqlalchemy import and_
 
 from ..database import get_db
+from ..middleware.auth import get_current_user
+from ..models.user import User
 from ..models.transaction import Transaction
 from ..models.account import Account
 from ..schemas.transaction import ImportRequest, ImportResponse
@@ -60,6 +62,7 @@ def _get_or_create_account(db: Session, account_key: str) -> Account:
 def import_selected_transactions(
     payload: ImportRequest,
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> ImportResponse:
     if not payload.transactions:
         raise HTTPException(status_code=400, detail="Nenhuma transação enviada.")
@@ -118,6 +121,7 @@ def import_selected_transactions(
             category=tx.category,
             category_group=tx.category_group,
             is_internal_transfer=tx.is_internal_transfer,
+            is_payment=tx.is_payment,
             installment_current=tx.installment_current,
             installment_total=tx.installment_total,
             source_file=payload.source_file,

@@ -11,12 +11,11 @@ Cabeçalho de seção (repetido por página):
 Linha de transação:
   DD MMM Descrição                         R$ X.XXX,XX   ← compra (negativo)
   DD MMM Estorno / Ajuste a crédito       −R$ X.XXX,XX   ← crédito (positivo, usa −)
-  DD MMM Pagamento em DD MMM              −R$ X.XXX,XX   ← pagamento da fatura (ignorar)
+  DD MMM Pagamento em DD/MM               −R$ X.XXX,XX   ← pagamento da fatura anterior
 
 Linhas a ignorar:
   USD XX.XX                        ← conversão de moeda
   Conversão: USD 1 = R$ X,XX      ← taxa de câmbio
-  Pagamento em DD MMM              ← pagamento da fatura (já no extrato conta corrente)
 
 Regras:
   • Ano extraído do cabeçalho "FATURA DD MMM YYYY"
@@ -63,6 +62,12 @@ _INSTALLMENT_RE = re.compile(
     re.IGNORECASE,
 )
 
+# ── Pagamento da fatura anterior ─────────────────────────────────────────────
+_PAYMENT_RE = re.compile(
+    r"Pagamento\s+(recebido\s+)?em\s+(?:\d{2}/\d{2}|\d{2}\s+[A-Z]{3})",
+    re.IGNORECASE,
+)
+
 # ── Linhas a ignorar completamente ───────────────────────────────────────────
 _SKIP_RE = re.compile(
     r"""
@@ -71,7 +76,6 @@ _SKIP_RE = re.compile(
     | ^transa[çc][oõ]es\s+de\s+\d{2} # "TRANSAÇÕES DE 04 FEV A 04 MAR"
     | ^usd\s+[\d.,]+                  # linha com valor em dólar
     | convers[aã]o:\s+usd             # "Conversão: USD 1 = R$ 5,40"
-    | ^pagamento\s+em\s+\d{2}         # pagamento da fatura (já no extrato)
     | ^\d+\s+de\s+\d+$               # paginação "5 de 8"
     | em\s+cumprimento\s+[àa]\s+regula[çc][aã]o  # rodapé legal
     | sistema\s+de\s+informa[çc][oõ]es\s+de\s+cr[eé]dito  # SCR
@@ -205,6 +209,7 @@ class FaturaCartaoNubankParser(BaseParser):
                 "account": self.ACCOUNT_KEY,
                 "installment_current": installment_current,
                 "installment_total":   installment_total,
+                "is_payment": bool(_PAYMENT_RE.search(description)),
                 **classification,
             })
 

@@ -10,7 +10,7 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 
 from app.database import Base          # noqa: E402
 from app.config import settings        # noqa: E402
-from app.models import Account, Transaction  # noqa: E402, F401
+from app.models import Account, Transaction, User  # noqa: E402, F401
 
 config = context.config
 if config.config_file_name is not None:

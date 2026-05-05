@@ -12,6 +12,7 @@ class TransactionBase(BaseModel):
     category: str | None = None
     category_group: str | None = None
     is_internal_transfer: bool = False
+    is_payment: bool = False
     installment_current: int | None = None
     installment_total: int | None = None
 
@@ -48,6 +49,7 @@ class ParsedTransaction(BaseModel):
     category: str | None = None
     category_group: str | None = None
     is_internal_transfer: bool = False
+    is_payment: bool = False
     installment_current: int | None = None
     installment_total: int | None = None
 

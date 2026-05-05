@@ -9,6 +9,14 @@ class InvoiceSummary(BaseModel):
     total_expenses: int
     total_credits_count: int
 
+    # Pagamento da fatura anterior
+    payment_amount: float
+    payment_description: str
+
+    # Estornos e reembolsos, sem pagamento da fatura
+    total_other_credits: float
+    total_other_credits_count: int
+
     # Maior gasto
     largest_expense: float
     largest_expense_description: str

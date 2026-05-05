@@ -15,5 +15,14 @@ class Settings(BaseSettings):
     # Pasta de dados reais (raiz do projeto)
     data_dir: Path = Path(__file__).parent.parent.parent.parent / "data"
 
+    # Auth — JWT
+    secret_key: str = "dev-secret-change-in-production"
+    algorithm: str = "HS256"
+    access_token_expire_minutes: int = 60
+
+    # Google OAuth
+    google_client_id: str = ""
+    google_client_secret: str = ""
+
 
 settings = Settings()

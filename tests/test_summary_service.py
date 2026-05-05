@@ -68,3 +68,53 @@ def test_summary_empty():
     assert s.total_invoice == 0.0
     assert s.largest_expense == 0.0
     assert s.future_commitment == 0.0
+
+
+def test_payment_is_identified_separately():
+    txs = [
+        {
+            "amount": -100.0,
+            "description": "Compra A",
+            "is_payment": False,
+            "installment_current": None,
+            "installment_total": None,
+        },
+        {
+            "amount": 850.0,
+            "description": "Pagamento em 11/03",
+            "is_payment": True,
+            "installment_current": None,
+            "installment_total": None,
+        },
+        {
+            "amount": 30.0,
+            "description": "Estorno X",
+            "is_payment": False,
+            "installment_current": None,
+            "installment_total": None,
+        },
+    ]
+    s = calculate_invoice_summary(txs)
+
+    assert s.payment_amount == 850.0
+    assert s.payment_description == "Pagamento em 11/03"
+    assert s.total_other_credits == 30.0
+    assert s.total_other_credits_count == 1
+    assert s.total_credits == 880.0
+    assert s.total_invoice == 100.0
+
+
+def test_no_payment_in_invoice():
+    txs = [
+        {
+            "amount": -50.0,
+            "description": "Compra",
+            "is_payment": False,
+            "installment_current": None,
+            "installment_total": None,
+        },
+    ]
+    s = calculate_invoice_summary(txs)
+    assert s.payment_amount == 0.0
+    assert s.payment_description == ""
+    assert s.total_other_credits == 0.0

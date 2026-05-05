@@ -3,6 +3,8 @@ from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import extract
 
 from ..database import get_db
+from ..middleware.auth import get_current_user
+from ..models.user import User
 from ..models.account import Account
 from ..models.transaction import Transaction
 from ..schemas.transaction import InvoiceTransactionsResponse, TransactionOut
@@ -27,6 +29,7 @@ def get_invoice_transactions(
     month: str = Query(..., description="Mês no formato YYYY-MM, ex: 2026-02"),
     limit: int = Query(1000, ge=1, le=1000),
     db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
 ) -> InvoiceTransactionsResponse:
     query = (
         db.query(Transaction)
@@ -73,6 +76,7 @@ def get_invoice_transactions(
                 "Retorna lista vazia enquanto nenhuma importação foi confirmada.",
 )
 def list_transactions(
+    current_user: User = Depends(get_current_user),
     month: str | None = Query(None, description="Mês no formato YYYY-MM, ex: 2026-01"),
     category: str | None = Query(None, description="Categoria exata, ex: Alimentação"),
     account: str | None = Query(None, description="Conta, ex: nubank_pf"),

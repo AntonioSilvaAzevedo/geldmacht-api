@@ -15,6 +15,8 @@ from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
 from ..database import get_db
+from ..middleware.auth import get_current_user
+from ..models.user import User
 from ..models.transaction import Transaction
 from ..models.account import Account
 
@@ -59,7 +61,10 @@ def _month_key(date_obj) -> str:
         "category/category_group são null — sem categorização no MVP."
     ),
 )
-def get_monthly_dashboard(db: Session = Depends(get_db)) -> dict:
+def get_monthly_dashboard(
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> dict:
     transactions = db.query(Transaction).order_by(Transaction.date).all()
 
     if not transactions:

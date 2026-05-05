@@ -94,6 +94,7 @@ alembic revision -m "descricao_da_migracao"
 - `ParsedTransaction.account` usa chaves como `nubank_pf`, `nubank_pj`, `nubank_cartao`, `itau`, `mercado_pago` e `b3`.
 - `category` e `category_group` devem permanecer `None` no MVP quando vindos dos parsers. A categorização é tratada fora do backend nesse fluxo.
 - Transferências internas devem marcar `is_internal_transfer=True` quando o parser conseguir identificar conta própria.
+- Pagamentos da fatura anterior no cartão Nubank devem marcar `is_payment=True`.
 - Parcelamentos usam `installment_current` e `installment_total`.
 - Importação considera duplicata por data, valor, descrição bruta e conta.
 
@@ -120,6 +121,12 @@ Regras de negócio:
 - `amount > 0` é crédito, estorno, cashback ou entrada.
 - `total_invoice` soma apenas gastos, usando valor positivo: `sum(abs(amount) for amount < 0)`.
 - `total_credits` soma apenas entradas/créditos: `sum(amount for amount > 0)`.
+- `total_credits` é retrocompatível e inclui todos os créditos: pagamento da fatura anterior mais estornos/reembolsos.
+- Pagamento da fatura anterior é detectado pelo parser com descrições no padrão `Pagamento em DD/MM`, `Pagamento recebido em DD/MM`, `Pagamento em DD MMM` ou `Pagamento recebido em DD MMM`.
+- `payment_amount` soma créditos marcados com `is_payment=True`.
+- `payment_description` usa a descrição do primeiro pagamento encontrado, ou string vazia.
+- `total_other_credits` soma créditos que não são pagamento.
+- `total_other_credits_count` conta créditos que não são pagamento.
 - Entradas não entram no total da fatura.
 - `largest_expense` é o valor absoluto do gasto mais negativo.
 - `largest_expense_description` é a descrição do maior gasto.
@@ -134,6 +141,10 @@ Campos do `InvoiceSummary`:
 - `total_transactions: int`
 - `total_expenses: int`
 - `total_credits_count: int`
+- `payment_amount: float`
+- `payment_description: str`
+- `total_other_credits: float`
+- `total_other_credits_count: int`
 - `largest_expense: float`
 - `largest_expense_description: str`
 - `total_installment_value: float`
@@ -148,6 +159,10 @@ Validação real feita com `../geldmacht/docs-geldmacht/data/fatura.pdf`:
 - `total_credits`: `12857.23`
 - `total_expenses`: `97`
 - `total_credits_count`: `7`
+- `payment_amount`: valor positivo do lançamento `Pagamento em 11/03`, quando presente na fatura parseada
+- `payment_description`: `Pagamento em 11/03`, quando presente na fatura parseada
+- `total_other_credits`: créditos sem pagamento da fatura anterior
+- `total_other_credits_count`: quantidade de créditos sem pagamento da fatura anterior
 - `largest_expense`: `460.0`
 - `largest_expense_description`: `Mercadao de Carnes`
 - `total_installment_value`: `2506.3`
@@ -179,6 +194,7 @@ Todo parser deve:
 - Sempre crie migração Alembic quando alterar schema persistido.
 - `alembic/env.py` importa os models para popular `Base.metadata`.
 - SQLite local usa `check_same_thread=False`; PostgreSQL não aceita esse argumento, e `app/database.py` já trata isso.
+- `transactions.is_payment` persiste a identificação do pagamento da fatura anterior para que `GET /api/transactions/invoice` consiga recalcular o summary corretamente a partir do banco.
 
 ## Cuidados de Segurança
 
