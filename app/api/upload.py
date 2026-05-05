@@ -3,6 +3,7 @@ from fastapi import APIRouter, File, HTTPException, UploadFile
 
 from ..parsers import detect_parser
 from ..schemas.transaction import ParsedTransaction, UploadResponse
+from ..services.summary_service import calculate_invoice_summary
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -11,6 +12,7 @@ router = APIRouter()
 @router.post(
     "/upload",
     response_model=UploadResponse,
+    response_model_exclude_none=True,
     summary="Enviar extrato (PDF ou Excel)",
     description=(
         "Detecta o tipo do arquivo, extrai as transações com o parser correto "
@@ -83,9 +85,14 @@ async def upload_statement(file: UploadFile = File(...)) -> UploadResponse:
         except Exception as exc:
             logger.warning("Transação ignorada (schema inválido): %s — %s", tx, exc)
 
+    summary = None
+    if parser_name == "faturacartaonubank":
+        summary = calculate_invoice_summary([tx.model_dump() for tx in parsed])
+
     return UploadResponse(
         parser_used=parser_name,
         source_file=filename,
         total_transactions=len(parsed),
         transactions=parsed,
+        summary=summary,
     )

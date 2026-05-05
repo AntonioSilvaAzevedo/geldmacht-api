@@ -21,6 +21,7 @@ class Transaction(Base):
     is_internal_transfer = Column(Boolean, default=False, nullable=False)
     installment_current  = Column(Integer, nullable=True)   # ex: 4 (de "Parcela 4/12")
     installment_total    = Column(Integer, nullable=True)   # ex: 12
+    billing_month        = Column(String(7), nullable=True, index=True)  # "YYYY-MM" — mês da fatura (cartão)
 
     account = relationship("Account", back_populates="transactions")
 

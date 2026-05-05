@@ -17,6 +17,7 @@ from ..database import get_db
 from ..models.transaction import Transaction
 from ..models.account import Account
 from ..schemas.transaction import ImportRequest, ImportResponse
+from ..services.summary_service import calculate_invoice_summary
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
@@ -49,6 +50,7 @@ def _get_or_create_account(db: Session, account_key: str) -> Account:
 @router.post(
     "/import",
     response_model=ImportResponse,
+    response_model_exclude_none=True,
     summary="Importar transações selecionadas",
     description=(
         "Recebe as transações que o usuário marcou para importar no preview, "
@@ -65,8 +67,24 @@ def import_selected_transactions(
     imported = 0
     skipped = 0
 
+    # Detecta o billing_month para faturas de cartão:
+    # usa o mês mais frequente entre as datas das transações
+    is_card_invoice = (
+        payload.parser_used == "faturacartaonubank"
+        or any(tx.account == "nubank_cartao" for tx in payload.transactions)
+    )
+    billing_month: str | None = None
+    if is_card_invoice:
+        from collections import Counter
+        month_counts = Counter(
+            tx.date.strftime("%Y-%m") for tx in payload.transactions
+        )
+        billing_month = month_counts.most_common(1)[0][0] if month_counts else None
+        logger.info("billing_month detectado: %s", billing_month)
+
     # Cache de accounts por key (evita N+1 queries)
     account_cache: dict[str, Account] = {}
+    imported_transactions = []
 
     for tx in payload.transactions:
         account_key = tx.account
@@ -103,9 +121,11 @@ def import_selected_transactions(
             installment_current=tx.installment_current,
             installment_total=tx.installment_total,
             source_file=payload.source_file,
+            billing_month=billing_month,
         )
         db.add(new_tx)
         imported += 1
+        imported_transactions.append(tx)
 
     try:
         db.commit()
@@ -118,4 +138,10 @@ def import_selected_transactions(
         "Import concluído: %d importadas, %d duplicatas ignoradas (arquivo: %s)",
         imported, skipped, payload.source_file,
     )
-    return ImportResponse(imported=imported, skipped=skipped)
+    summary = None
+    if is_card_invoice:
+        summary = calculate_invoice_summary([
+            tx.model_dump() for tx in imported_transactions
+        ])
+
+    return ImportResponse(imported=imported, skipped=skipped, summary=summary)

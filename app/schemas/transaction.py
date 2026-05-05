@@ -1,6 +1,8 @@
 from datetime import date, datetime
 from pydantic import BaseModel
 
+from .summary import InvoiceSummary
+
 
 class TransactionBase(BaseModel):
     date: date
@@ -25,8 +27,14 @@ class TransactionOut(TransactionBase):
     account_type: str | None = None   # 'nubank_pf', 'nubank_cartao', etc.
     source_file: str | None = None
     imported_at: datetime
+    billing_month: str | None = None  # "YYYY-MM" — mês da fatura (apenas cartão)
 
     model_config = {"from_attributes": True}
+
+
+class InvoiceTransactionsResponse(BaseModel):
+    transactions: list[TransactionOut]
+    summary: InvoiceSummary
 
 
 # ─── Schema retornado pelo endpoint de upload (preview, sem salvar) ────────────
@@ -49,6 +57,7 @@ class UploadResponse(BaseModel):
     source_file: str
     total_transactions: int
     transactions: list[ParsedTransaction]
+    summary: InvoiceSummary | None = None
 
 
 # ─── Schema para confirmação de importação (Etapa 2.3) ────────────────────────
@@ -64,3 +73,4 @@ class ImportResponse(BaseModel):
     """Resultado da importação: quantas foram salvas e quantas foram ignoradas."""
     imported: int
     skipped: int
+    summary: InvoiceSummary | None = None
