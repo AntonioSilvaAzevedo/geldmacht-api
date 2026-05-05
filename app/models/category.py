@@ -13,6 +13,7 @@ class Category(Base):
     name       = Column(String(120), nullable=False)
     scope      = Column(String(50), nullable=False, index=True)
     color      = Column(String(20), nullable=True)
+    icon       = Column(String(50), nullable=True)
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 

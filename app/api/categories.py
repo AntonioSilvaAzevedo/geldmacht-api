@@ -46,6 +46,7 @@ def create_category(
         name=body.name.strip(),
         scope=body.scope,
         color=body.color,
+        icon=body.icon,
     )
     db.add(category)
     db.commit()
@@ -67,6 +68,9 @@ def update_category(
         category.scope = body.scope
     if body.color is not None:
         category.color = body.color or None
+    # icon: None means "no change", empty string means "clear icon"
+    if body.icon is not None:
+        category.icon = body.icon or None
     db.commit()
     db.refresh(category)
     return category

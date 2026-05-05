@@ -10,6 +10,7 @@ class CategoryBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     scope: str
     color: str | None = Field(None, max_length=20)
+    icon: str | None = Field(None, max_length=50)
 
     @field_validator("scope")
     @classmethod
@@ -27,6 +28,7 @@ class CategoryUpdate(BaseModel):
     name: str | None = Field(None, min_length=1, max_length=120)
     scope: str | None = None
     color: str | None = Field(None, max_length=20)
+    icon: str | None = Field(None, max_length=50)
 
     @field_validator("scope")
     @classmethod
