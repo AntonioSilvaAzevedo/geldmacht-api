@@ -15,6 +15,8 @@ class Transaction(Base):
     raw_description      = Column(String(500), nullable=True)   # texto original do extrato
     amount               = Column(Float,   nullable=False)       # negativo = saída
     account_id           = Column(Integer, ForeignKey("accounts.id"), nullable=True)
+    card_id              = Column(Integer, ForeignKey("credit_cards.id"), nullable=True, index=True)
+    category_id          = Column(Integer, ForeignKey("categories.id"), nullable=True, index=True)
     category             = Column(String(100), nullable=True)
     category_group       = Column(String(50),  nullable=True)    # Entradas, Cartão, Fixos, etc.
     source_file          = Column(String(255), nullable=True)    # nome do arquivo importado
@@ -23,10 +25,17 @@ class Transaction(Base):
     is_payment           = Column(Boolean, default=False, nullable=False)  # pagamento da fatura anterior
     installment_current  = Column(Integer, nullable=True)        # ex: 4 (de "Parcela 4/12")
     installment_total    = Column(Integer, nullable=True)        # ex: 12
-    billing_month        = Column(String(7), nullable=True, index=True)  # "YYYY-MM" — mês da fatura
+    reference_month      = Column(String(7), nullable=True, index=True)  # "YYYY-MM" — legado
+    billing_month        = Column(String(7), nullable=True, index=True)  # "YYYY-MM" — legado
 
-    user    = relationship("User",    back_populates="transactions")
-    account = relationship("Account", back_populates="transactions")
+    # invoice_id é a âncora principal para transações de fatura (substituindo reference_month)
+    invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    user         = relationship("User",       back_populates="transactions")
+    account      = relationship("Account",    back_populates="transactions")
+    card         = relationship("CreditCard", back_populates="transactions")
+    category_ref = relationship("Category",   back_populates="transactions")
+    invoice      = relationship("Invoice",    back_populates="transactions")
 
     def __repr__(self) -> str:
         sign = "+" if self.amount >= 0 else ""

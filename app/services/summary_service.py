@@ -8,6 +8,13 @@ def calculate_invoice_summary(transactions: list[dict]) -> InvoiceSummary:
     Convenção:
     - amount < 0 = gasto
     - amount > 0 = entrada/estorno/crédito
+
+    Importante:
+    - ``total_invoice`` é a soma dos valores absolutos apenas das linhas com
+      ``amount < 0`` (gastos brutos nos lançamentos parseados).
+    - Isso não substitui o valor oficial ``total_amount`` da fatura no PDF
+      (“Total a pagar”), que pode líquidar IOF, créditos, encargos e outros
+      itens não refletidos de forma explícita em cada lançamento.
     """
     expenses = [t for t in transactions if t["amount"] < 0]
     credits = [t for t in transactions if t["amount"] > 0]

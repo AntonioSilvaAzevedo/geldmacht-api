@@ -5,6 +5,7 @@ from ..middleware.auth import get_current_user
 from ..models.user import User
 from ..parsers import detect_parser
 from ..schemas.transaction import ParsedTransaction, UploadResponse
+from ..schemas.invoice import InvoiceMetadata
 from ..services.summary_service import calculate_invoice_summary
 
 logger = logging.getLogger(__name__)
@@ -91,13 +92,27 @@ async def upload_statement(
             logger.warning("Transação ignorada (schema inválido): %s — %s", tx, exc)
 
     summary = None
+    detected_reference_month = None
+    invoice_metadata: InvoiceMetadata | None = None
+
     if parser_name == "faturacartaonubank":
         summary = calculate_invoice_summary([tx.model_dump() for tx in parsed])
+
+        # Extrai metadados reais da fatura (due_date, ciclo, total, etc.)
+        if hasattr(parser, "extract_invoice_metadata"):
+            raw_meta = parser.extract_invoice_metadata(content)
+            if raw_meta:
+                invoice_metadata = InvoiceMetadata(**raw_meta)
+                detected_reference_month = invoice_metadata.due_month
+        elif hasattr(parser, "extract_reference_month"):
+            detected_reference_month = parser.extract_reference_month(content)
 
     return UploadResponse(
         parser_used=parser_name,
         source_file=filename,
         total_transactions=len(parsed),
         transactions=parsed,
+        detected_reference_month=detected_reference_month,
+        invoice_metadata=invoice_metadata,
         summary=summary,
     )

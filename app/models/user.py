@@ -19,6 +19,9 @@ class User(Base):
     # Dados do usuário — cascade garante limpeza ao deletar o User
     accounts     = relationship("Account",     back_populates="user", cascade="all, delete-orphan")
     transactions = relationship("Transaction", back_populates="user", cascade="all, delete-orphan")
+    credit_cards = relationship("CreditCard",  back_populates="user", cascade="all, delete-orphan")
+    categories   = relationship("Category",    back_populates="user", cascade="all, delete-orphan")
+    invoices     = relationship("Invoice",     back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<User {self.email}>"

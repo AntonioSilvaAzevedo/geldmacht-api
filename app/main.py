@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .api import upload, transactions, import_transactions, dashboard
+from .api import cards, categories, dashboard, import_transactions, transactions, upload
 from .api.auth import router as auth_router
 
 logging.basicConfig(
@@ -46,6 +46,8 @@ app.include_router(auth_router)
 app.include_router(upload.router, prefix="/api", tags=["Upload"])
 app.include_router(import_transactions.router, prefix="/api", tags=["Import"])
 app.include_router(transactions.router, prefix="/api", tags=["Transações"])
+app.include_router(cards.router, prefix="/api", tags=["Cartões"])
+app.include_router(categories.router, prefix="/api", tags=["Categorias"])
 app.include_router(dashboard.router, prefix="/api", tags=["Dashboard"])
 
 

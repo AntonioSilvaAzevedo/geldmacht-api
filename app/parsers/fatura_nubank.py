@@ -41,9 +41,129 @@ _MONTH_MAP = {
     "SET": 9, "OUT": 10, "NOV": 11, "DEZ": 12,
 }
 
+_MONTH_LABELS_PT = {
+    1: "janeiro", 2: "fevereiro", 3: "março", 4: "abril",
+    5: "maio", 6: "junho", 7: "julho", 8: "agosto",
+    9: "setembro", 10: "outubro", 11: "novembro", 12: "dezembro",
+}
+
 # ── Cabeçalho "FATURA DD MMM YYYY" — extrai o ano da fatura ──────────────────
 _FATURA_HEADER_RE = re.compile(
-    r"FATURA\s+\d{2}\s+[A-Z]{3}\s+(\d{4})", re.IGNORECASE
+    r"FATURA\s+\d{2}\s+([A-Z]{3})\s+(\d{4})", re.IGNORECASE
+)
+
+# ── Cabeçalho completo: "FATURA DD MMM YYYY EMISSÃO E ENVIO DD MMM YYYY" ─────
+_FATURA_FULL_RE = re.compile(
+    r"FATURA\s+(\d{1,2})\s+([A-Z]{3})\s+(\d{4})", re.IGNORECASE
+)
+
+# ── "EMISSÃO E ENVIO DD MMM YYYY" — data de emissão ─────────────────────────
+_ISSUE_DATE_RE = re.compile(
+    r"emiss[aã]o\s+[Ee]\s+envio\s+(\d{1,2})\s+([A-Z]{3})\s+(\d{4})", re.IGNORECASE
+)
+
+# ── "Data de vencimento: DD ABR 2026" — vencimento explícito ─────────────────
+_DUE_DATE_RE = re.compile(
+    r"data\s+de\s+vencimento[:\s]+(\d{1,2})\s+([A-Z]{3})\s+(\d{4})", re.IGNORECASE
+)
+
+# ── "Período vigente: 04 MAR a 04 ABR" ───────────────────────────────────────
+_PERIOD_RE = re.compile(
+    r"per[íi]odo\s+vigente[:\s]+(\d{1,2})\s+([A-Z]{3})\s+[Aa]\s+(\d{1,2})\s+([A-Z]{3})",
+    re.IGNORECASE,
+)
+
+# ── "TRANSAÇÕES DE 04 FEV A 04 MAR" (cabeçalho repetido por página) ──────────
+_PERIOD_ALT_RE = re.compile(
+    r"transa[çc][oõ]es\s+de\s+(\d{1,2})\s+([A-Z]{3})\s+[Aa]\s+(\d{1,2})\s+([A-Z]{3})",
+    re.IGNORECASE,
+)
+
+# ── "Total a pagar R$ 12.542,08" ─────────────────────────────────────────────
+# Pode aparecer mais de uma vez no PDF (ex.: resumo x detalhes). Preferimos a
+# última ocorrência com contexto de fatura atual, ignorando próximas faturas,
+# pagamento mínimo e saldos externos.
+_TOTAL_RE = re.compile(
+    r"total\s+a\s+pagar\s+R\$\s*([\d.]+,\d{2})", re.IGNORECASE
+)
+
+_TOTAL_CONTEXT_SKIP = re.compile(
+    r"""
+      pr[oó]xima\s+fatura
+    | saldo\s+em\s+aberto\s+total
+    | pagamento\s+m[íi]nimo
+    | parcelamento\s+m[íi]nimo
+    | composi[çc][aã]o\s+do\s+pagamento
+    """,
+    re.IGNORECASE | re.VERBOSE,
+)
+
+# Cabeçalho: "... no valor de R$ 12.542,08" (menos confiável que "total a pagar")
+_HEADER_VALOR_NO_RE = re.compile(
+    r"no\s+valor\s+de\s+R\$\s*([\d.]+,\d{2})", re.IGNORECASE
+)
+
+
+def _parse_brl_capture(group1: str) -> float | None:
+    raw = group1.replace(".", "").replace(",", ".")
+    try:
+        return float(raw)
+    except ValueError:
+        return None
+
+
+def _pick_invoice_total_amount(text: str) -> float | None:
+    """
+    Valor oficial do PDF para `invoice_metadata.total_amount`.
+
+    1. Todas as ocorrências de "Total a pagar R$ ...", descartando contexto de
+       próxima fatura / saldo em aberto total / parcelamento ou pagamento mínimo.
+       Usa a **última** sobrevivente — em faturas reais há subtotais com o mesmo
+       texto onde o menor valor não corresponde ao que o usuário deve pagar.
+    2. Se nenhuma passar pelo filtro, usa a última ocorrência bruta desse mesmo padrão.
+    3. Se não houver "total a pagar", tenta cabeçalho "no valor de R$ ...".
+    """
+    matches = list(_TOTAL_RE.finditer(text))
+    filtered: list[float] = []
+
+    for m in matches:
+        value = _parse_brl_capture(m.group(1))
+        if value is None:
+            continue
+        line_begin = text.rfind("\n", 0, m.start()) + 1
+        line_end = text.find("\n", m.end())
+        if line_end < 0:
+            line_end = len(text)
+        # Só texto até o fim desta linha (+ lookback). Não olhar adiante: abaixo pode
+        # vir "Próxima fatura" e invalidar indevidamente o total da fatura atual.
+        win_start = max(0, line_begin - 400)
+        window = text[win_start:line_end]
+        tl = window.lower()
+        if _TOTAL_CONTEXT_SKIP.search(tl):
+            continue
+        filtered.append(value)
+
+    if filtered:
+        return filtered[-1]
+
+    # Fallback sem filtro: última linha literal "total a pagar"
+    if matches:
+        for m in reversed(matches):
+            raw = _parse_brl_capture(m.group(1))
+            if raw is not None:
+                return raw
+        return None
+
+    for m in _HEADER_VALOR_NO_RE.finditer(text):
+        v = _parse_brl_capture(m.group(1))
+        if v is not None:
+            return v
+    return None
+
+# ── "Esta é a sua fatura de abril" ────────────────────────────────────────────
+_FATURA_LABEL_RE = re.compile(
+    r"(?:esta\s+[eé]\s+a\s+sua\s+)?fatura\s+de\s+([a-z\u00e0-\u00fc]+)",
+    re.IGNORECASE,
 )
 
 # ── Linha de transação: DD MMM Descrição R$ X,XX ─────────────────────────────
@@ -219,6 +339,138 @@ class FaturaCartaoNubankParser(BaseParser):
         """Extrai o ano do cabeçalho 'FATURA DD MMM YYYY'."""
         m = _FATURA_HEADER_RE.search(text)
         if m:
-            return int(m.group(1))
+            return int(m.group(2))
         # Fallback: ano corrente
         return date.today().year
+
+    def extract_invoice_metadata(self, file_content: bytes) -> dict | None:
+        """
+        Extrai metadados reais da fatura Nubank a partir do PDF.
+
+        Retorna dict com os campos:
+          invoice_label_month, due_date, due_month, cycle_start_date,
+          cycle_end_date, issue_date, closing_date, total_amount, source
+
+        Todos os campos de data são strings "YYYY-MM-DD" ou None.
+
+        Regra de ano para o período vigente:
+          - O ano base é extraído de due_date (ou do cabeçalho FATURA).
+          - Se start_month > end_month → start pertence ao ano anterior.
+          - Caso contrário → mesmo ano de end.
+        """
+        try:
+            with pdfplumber.open(io.BytesIO(file_content)) as pdf:
+                text = "\n".join(
+                    (page.extract_text(x_tolerance=3, y_tolerance=3) or "")
+                    for page in pdf.pages
+                )
+        except Exception as exc:
+            logger.error("extract_invoice_metadata: falha ao ler PDF: %s", exc)
+            return None
+
+        def _make_date(day: int, month: int, year: int) -> str | None:
+            try:
+                return date(year, month, day).isoformat()
+            except ValueError:
+                return None
+
+        # ── due_date ─────────────────────────────────────────────────────────
+        due_date: str | None = None
+        due_year: int | None = None
+        due_month_num: int | None = None
+
+        # 1ª prioridade: "Data de vencimento: DD ABR 2026"
+        m = _DUE_DATE_RE.search(text)
+        if m:
+            dd, mmm, yyyy = int(m.group(1)), _MONTH_MAP.get(m.group(2).upper()), int(m.group(3))
+            if mmm:
+                due_date = _make_date(dd, mmm, yyyy)
+                due_year = yyyy
+                due_month_num = mmm
+
+        # 2ª prioridade: "FATURA DD ABR 2026"
+        if not due_date:
+            m2 = _FATURA_FULL_RE.search(text)
+            if m2:
+                dd, mmm, yyyy = int(m2.group(1)), _MONTH_MAP.get(m2.group(2).upper()), int(m2.group(3))
+                if mmm:
+                    due_date = _make_date(dd, mmm, yyyy)
+                    due_year = yyyy
+                    due_month_num = mmm
+
+        # ── due_month ────────────────────────────────────────────────────────
+        due_month: str | None = None
+        if due_year and due_month_num:
+            due_month = f"{due_year:04d}-{due_month_num:02d}"
+
+        # ── issue_date ───────────────────────────────────────────────────────
+        issue_date: str | None = None
+        m = _ISSUE_DATE_RE.search(text)
+        if m:
+            dd = int(m.group(1))
+            mmm = _MONTH_MAP.get(m.group(2).upper())
+            yyyy = int(m.group(3))
+            if mmm:
+                issue_date = _make_date(dd, mmm, yyyy)
+
+        # ── cycle_start_date / cycle_end_date ─────────────────────────────
+        cycle_start_date: str | None = None
+        cycle_end_date: str | None = None
+
+        period_match = _PERIOD_RE.search(text) or _PERIOD_ALT_RE.search(text)
+        if period_match and due_year:
+            s_day  = int(period_match.group(1))
+            s_mmm  = _MONTH_MAP.get(period_match.group(2).upper())
+            e_day  = int(period_match.group(3))
+            e_mmm  = _MONTH_MAP.get(period_match.group(4).upper())
+
+            if s_mmm and e_mmm:
+                end_year = due_year
+                # Se mês de início > mês de fim → início é do ano anterior
+                start_year = end_year - 1 if s_mmm > e_mmm else end_year
+                cycle_start_date = _make_date(s_day, s_mmm, start_year)
+                cycle_end_date   = _make_date(e_day, e_mmm, end_year)
+
+        # ── closing_date ─────────────────────────────────────────────────────
+        # Por padrão = cycle_end_date (não há campo separado no PDF Nubank)
+        closing_date = cycle_end_date
+
+        # ── total_amount ─────────────────────────────────────────────────────
+        total_amount = _pick_invoice_total_amount(text)
+
+        # ── invoice_label_month ───────────────────────────────────────────────
+        invoice_label_month: str | None = None
+        m = _FATURA_LABEL_RE.search(text)
+        if m:
+            invoice_label_month = m.group(1).lower()
+
+        # Se não encontrou pelo regex de label mas temos due_month_num, derivar
+        if not invoice_label_month and due_month_num:
+            invoice_label_month = _MONTH_LABELS_PT.get(due_month_num)
+
+        return {
+            "invoice_label_month": invoice_label_month,
+            "due_date": due_date,
+            "due_month": due_month,
+            "cycle_start_date": cycle_start_date,
+            "cycle_end_date": cycle_end_date,
+            "issue_date": issue_date,
+            "closing_date": closing_date,
+            "total_amount": total_amount,
+            "source": "nubank_pdf",
+        }
+
+    def extract_reference_month(self, file_content: bytes) -> str | None:
+        """Extrai o mês de referência da fatura a partir do cabeçalho."""
+        try:
+            with pdfplumber.open(io.BytesIO(file_content)) as pdf:
+                text = "\n".join((page.extract_text() or "") for page in pdf.pages[:3])
+        except Exception:
+            return None
+        m = _FATURA_HEADER_RE.search(text)
+        if not m:
+            return None
+        month_num = _MONTH_MAP.get(m.group(1).upper())
+        if not month_num:
+            return None
+        return f"{int(m.group(2)):04d}-{month_num:02d}"
