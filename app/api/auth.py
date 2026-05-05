@@ -65,16 +65,22 @@ def login(body: LoginRequest, db: Session = Depends(get_db)) -> AuthResponse:
     )
 
 
-@router.post("/register", response_model=AuthResponse, status_code=status.HTTP_201_CREATED)
-def register(body: RegisterRequest, db: Session = Depends(get_db)) -> AuthResponse:
+class RegisterResponse(BaseModel):
+    message: str
+    user: UserOut
+
+
+@router.post("/register", response_model=RegisterResponse, status_code=status.HTTP_201_CREATED)
+def register(body: RegisterRequest, db: Session = Depends(get_db)) -> RegisterResponse:
     if get_user_by_email(db, body.email):
         raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="E-mail já cadastrado")
+    if len(body.password) < 8:
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Senha deve ter pelo menos 8 caracteres")
 
     user = create_user(db, body.email, body.password, body.name)
-    token = create_access_token({"sub": user.email})
     logger.info("Registro: %s", user.email)
-    return AuthResponse(
-        access_token=token,
+    return RegisterResponse(
+        message="Usuário criado com sucesso",
         user=UserOut(email=user.email, name=user.name),
     )
 
