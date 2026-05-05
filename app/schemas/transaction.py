@@ -76,3 +76,9 @@ class ImportResponse(BaseModel):
     imported: int
     skipped: int
     summary: InvoiceSummary | None = None
+
+
+class TransactionUpdate(BaseModel):
+    """Campos editáveis pelo usuário (descrição e/ou categoria)."""
+    description: str | None = None
+    category: str | None = None

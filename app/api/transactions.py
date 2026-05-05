@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import extract
 
@@ -7,7 +7,7 @@ from ..middleware.auth import get_current_user
 from ..models.user import User
 from ..models.account import Account
 from ..models.transaction import Transaction
-from ..schemas.transaction import InvoiceTransactionsResponse, TransactionOut
+from ..schemas.transaction import InvoiceTransactionsResponse, TransactionOut, TransactionUpdate
 from ..services.summary_service import calculate_invoice_summary
 
 router = APIRouter()
@@ -17,6 +17,38 @@ def _serialize_transaction(tx: Transaction) -> TransactionOut:
     out = TransactionOut.model_validate(tx)
     out.account_type = tx.account.type if tx.account else None
     return out
+
+
+@router.patch(
+    "/transactions/{tx_id}",
+    response_model=TransactionOut,
+    summary="Atualizar transação",
+    description="Edita descrição e/ou categoria de uma transação do usuário autenticado.",
+)
+def update_transaction(
+    tx_id: int,
+    body: TransactionUpdate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TransactionOut:
+    tx = (
+        db.query(Transaction)
+        .options(joinedload(Transaction.account))
+        .filter(
+            Transaction.id      == tx_id,
+            Transaction.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not tx:
+        raise HTTPException(status_code=404, detail="Transação não encontrada.")
+    if body.description is not None:
+        tx.description = body.description.strip()
+    if body.category is not None:
+        tx.category = body.category or None
+    db.commit()
+    db.refresh(tx)
+    return _serialize_transaction(tx)
 
 
 @router.get(
