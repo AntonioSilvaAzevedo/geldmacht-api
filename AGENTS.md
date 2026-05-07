@@ -191,7 +191,8 @@ Campos:
 - `user_id`
 - `name`
 - `scope`
-- `color`
+- `color` — legado, mantido para compatibilidade. Não é o principal identificador visual.
+- `icon` — chave de ícone (ex: `"shopping-cart"`, `"utensils"`, `"car"`). Nullable. Migration `a1b2c3d4e5f6`.
 - `created_at`
 - `updated_at`
 
@@ -201,6 +202,61 @@ Regras:
 - Categorias são sempre filtradas por `user_id`.
 - Importação de fatura aceita `category_id` por transação, valida que a categoria pertence ao usuário e salva também `category` com o nome atual para compatibilidade.
 - Não existe categorização automática, regra por descrição, sugestão inteligente ou IA.
+- `PATCH /api/categories/{id}` aceita `name`, `color` e `icon`. Atualiza apenas os campos enviados.
+- `icon` é a representação visual principal. `color` é mantido como legado.
+- O backend armazena apenas a chave do ícone (string). Ex: `"shopping-cart"`, não componente visual.
+- Para `icon`: valor `null` = não altera; string vazia = salva como `null` (limpeza explícita).
+- `PATCH /api/categories/{id}` valida que a categoria pertence ao `user_id` autenticado.
+
+## Compras Parceladas (Classificação Sistêmica)
+
+Compras parceladas **não** são uma categoria manual. São uma classificação derivada dos campos `installment_current` e `installment_total` na `Transaction`.
+
+### Como são identificadas
+
+O parser `FaturaCartaoNubankParser` (`app/parsers/fatura_nubank.py`) extrai o padrão via `_INSTALLMENT_RE`:
+
+```
+"<Descrição> - Parcela <X>/<Y>"  →  installment_current=X, installment_total=Y
+```
+
+Ao fazer match, o sufixo "- Parcela X/Y" é removido da `description`. `raw_description` preserva o texto original.
+
+Critério de compra parcelada: `installment_current IS NOT NULL AND installment_total IS NOT NULL AND installment_total > 1`.
+
+### Campos na Transaction
+
+| Campo | Tipo | Descrição |
+|---|---|---|
+| `installment_current` | Integer nullable | Número da parcela atual (ex: 2) |
+| `installment_total` | Integer nullable | Total de parcelas (ex: 4) |
+
+`is_installment` não é persistido — é derivado no frontend.
+
+### Relação com category_id
+
+"Compras parceladas" é uma **classificação sistêmica**, independente da categoria manual.
+
+- `category_id` manual **não é sobrescrito** pela identificação de parcelas.
+- Uma transaction pode ter `installment_current=2, installment_total=4` **e** `category_id=3` simultaneamente.
+- Não existe categoria `"Compras parceladas"` na tabela `categories`. Não deve ser criada automaticamente.
+
+### Cálculo de parcelas futuras estimadas
+
+```
+parcelas_futuras = installment_total - installment_current
+valor_futuro_estimado = abs(amount) * parcelas_futuras
+```
+
+Este cálculo é uma estimativa. **Não criar transações futuras automaticamente.** `invoice.total_amount` não é alterado por parcelas.
+
+### Recategorização de transactions (`PATCH /api/transactions/{id}`)
+
+Aceita `category_id` para alterar a categoria de uma transaction já importada.
+
+- `category_id = 0` remove a categoria (seta `category_id = null` e `category = null`).
+- `category_id` deve pertencer ao `user_id` autenticado e ter `scope = credit_card`.
+- `installment_current`, `installment_total`, `card_id`, `invoice_id` **nunca** são alterados por este endpoint.
 
 ## Importação de Fatura por Cartão
 
@@ -355,6 +411,7 @@ Todo parser deve:
 - `invoices` — tabela de faturas reais criada pela migration `e5f6a7b8c9d0`. Inclui migração automática de dados antigos (agrupa por `user_id + card_id + reference_month`).
 - Migration `b8a741a98760` cria `credit_cards`, `categories` e adiciona `card_id`, `reference_month`, `category_id` em `transactions`.
 - Migration `e5f6a7b8c9d0` cria `invoices`, adiciona `invoice_id` em `transactions` e migra dados antigos.
+- Migration `a1b2c3d4e5f6` adiciona coluna `icon` (nullable String(50)) na tabela `categories`.
 
 ## Cuidados de Segurança
 
