@@ -176,6 +176,22 @@ Regras:
 - `closing_day` e `due_day` devem estar entre 1 e 31.
 - `GET /api/cards/{card_id}/invoices` retorna invoices reais da tabela `Invoice`.
 
+### Limite do cartão (`credit_limit`)
+
+- Campo `credit_limit` (Float, nullable) em `credit_cards`. Migration `f4a5b6c7d8e9`.
+- Valor **informado manualmente** pelo usuário — **não** representa o limite real do banco/emissor. Serve como referência para cálculos auxiliares no frontend (ex: `% da última fatura sobre o limite informado`, "orçamento liberado por parcelas finalizadas").
+- Validações (Pydantic + endpoint):
+  - `null` → não informado.
+  - `> 0` → valor válido.
+  - Zero/negativo no `POST` → 422.
+  - **Sentinelas no `PATCH`**:
+    - `null`/ausente → não altera.
+    - `0` → remove o limite (vira `null`).
+    - `> 0` → define novo limite.
+    - `< 0` → 422.
+- Isolamento: usuário não pode editar limite de cartão alheio (404 via `_get_user_card`).
+- Cartões existentes sem limite (legado) continuam funcionando — o campo é nullable.
+
 ### Exclusão de cartão (`DELETE /api/cards/{card_id}`)
 
 - Valida que o cartão pertence ao `user_id` do usuário autenticado (via `_get_user_card`).
@@ -303,6 +319,34 @@ valor_futuro_estimado = abs(amount) * parcelas_futuras
 ```
 
 Este cálculo é uma estimativa. **Não criar transações futuras automaticamente.** `invoice.total_amount` não é alterado por parcelas.
+
+### Identificação de parcela finalizada
+
+Uma compra parcelada **terminou** nesta fatura quando:
+
+```
+installment_current == installment_total  (e installment_total > 1)
+```
+
+Isso significa que a última parcela foi paga. O frontend usa esse critério para exibir o card "Orçamento liberado":
+
+```
+released_budget_amount = abs(amount)         (por lançamento finalizado)
+released_budget_total  = soma dos abs(amount) de todas as parcelas finalizadas
+```
+
+Esse cálculo é puramente visual/derivado — **não** altera `invoice.total_amount`, **não** cria transações futuras, **não** afeta `summary.future_commitment`.
+
+### Compras parceladas e "Sem categoria" (regra de agrupamento)
+
+Compras parceladas têm `category_id = null` por design (são sistêmicas, não recebem categoria manual). Isso significa que, do ponto de vista do banco, "Sem categoria" e "Compras parceladas" se sobreporiam visualmente.
+
+**Regra correta de agrupamento (no frontend)**:
+
+- Lançamento sistêmico (`is_payment = True` OU compra parcelada com `installment_total > 1`) → aparece **apenas** na seção "Compras parceladas" (ou na tela de pagamento, conforme o caso). **Não** entra em "Sem categoria".
+- Lançamento comum sem `category_id` (e que não é sistêmico) → entra em "Sem categoria".
+
+O backend não muda — o filtro é responsabilidade do frontend, que usa o helper `isSystemicTx`. Os endpoints continuam retornando os campos originais (`installment_*`, `is_payment`, `category_id`) para que o frontend possa decidir.
 
 ### Recategorização de transactions (`PATCH /api/transactions/{id}`)
 
@@ -667,6 +711,7 @@ Todo parser deve:
 - Migration `c1d2e3f4a5b6` adiciona em `categories`: `card_id` (FK `credit_cards`, nullable, ON DELETE SET NULL), `parent_id` (self-FK, nullable, ON DELETE CASCADE) e `invoice_budget_limit` (Float, nullable). Índices em `card_id` e `parent_id`.
 - Migration `d2e3f4a5b6c7` cria `release_notes` (notas de atualização por versão) e `user_release_note_views` (registro de visualização por usuário, com unique `user_id + release_note_id`).
 - Migration `e3f4a5b6c7d8` adiciona `users.onboarding_seen_at` (DateTime nullable) para controle do onboarding inicial.
+- Migration `f4a5b6c7d8e9` adiciona `credit_cards.credit_limit` (Float nullable) — limite do cartão informado pelo usuário.
 
 ## Cuidados de Segurança
 

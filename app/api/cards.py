@@ -83,6 +83,7 @@ def create_card(
         institution=body.institution.strip() if body.institution else None,
         closing_day=body.closing_day,
         due_day=body.due_day,
+        credit_limit=body.credit_limit,
     )
     db.add(card)
     db.commit()
@@ -106,6 +107,14 @@ def update_card(
         card.closing_day = body.closing_day
     if body.due_day is not None:
         card.due_day = body.due_day
+    # credit_limit: None = não altera; 0 = remove; >0 = define.
+    if body.credit_limit is not None:
+        if body.credit_limit == 0:
+            card.credit_limit = None
+        else:
+            if body.credit_limit < 0:
+                raise HTTPException(status_code=422, detail="Limite do cartão deve ser maior que zero.")
+            card.credit_limit = float(body.credit_limit)
     db.commit()
     db.refresh(card)
     return card
