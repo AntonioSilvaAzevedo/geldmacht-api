@@ -210,6 +210,17 @@ def import_selected_transactions(
             )
         account = account_cache[account_key]
 
+        # Lançamentos sistêmicos (compras parceladas e pagamento da fatura) não recebem
+        # category_id manual. Se o frontend enviar, normalizamos silenciosamente para None.
+        is_systemic_tx = bool(tx.is_payment) or (
+            tx.installment_current is not None
+            and tx.installment_total is not None
+            and tx.installment_total > 1
+        )
+        if is_systemic_tx:
+            tx.category_id = None
+            tx.category = None
+
         category = None
         if tx.category_id is not None:
             if tx.category_id not in category_cache:

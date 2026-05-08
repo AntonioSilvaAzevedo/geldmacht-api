@@ -47,11 +47,26 @@ def update_transaction(
     )
     if not tx:
         raise HTTPException(status_code=404, detail="Transação não encontrada.")
+
+    # Bloqueia categorização manual de lançamentos sistêmicos.
+    # Compras parceladas (installment_total > 1) e pagamentos da fatura (is_payment=True)
+    # são classificações sistêmicas — não recebem category_id manual.
+    is_systemic = bool(tx.is_payment) or (
+        tx.installment_current is not None
+        and tx.installment_total is not None
+        and tx.installment_total > 1
+    )
+
     if body.description is not None:
         tx.description = body.description.strip()
-    if body.category is not None:
+    if body.category is not None and not is_systemic:
         tx.category = body.category or None
     if body.category_id is not None:
+        if is_systemic:
+            raise HTTPException(
+                status_code=400,
+                detail="Este lançamento é sistêmico e não pode ser categorizado manualmente.",
+            )
         if body.category_id == 0:
             tx.category_id = None
             tx.category = None

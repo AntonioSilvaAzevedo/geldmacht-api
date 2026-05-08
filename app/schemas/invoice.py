@@ -62,6 +62,38 @@ class InvoiceListItem(BaseModel):
     label: str = ""                      # ex: "Vencimento em Abril/2026"
 
 
+class InvoiceMini(BaseModel):
+    """Versão mínima para uso em respostas agregadas (dashboard)."""
+    id: int
+    due_month: str
+    due_date: date | None = None
+    total_amount: float | None = None
+    computed_total: float = 0.0
+
+
+class TopCategoryItem(BaseModel):
+    category_id: int | None = None
+    name: str
+    icon: str | None = None
+    total: float
+
+
+class CardDashboardResponse(BaseModel):
+    """
+    Resposta agregada de visão geral do cartão.
+    GET /api/cards/{card_id}/dashboard
+    """
+    card_id: int
+    invoice_count: int
+    latest_invoice: InvoiceMini | None = None
+    monthly_average: float = 0.0
+    highest_invoice: InvoiceMini | None = None
+    future_installments_total: float = 0.0
+    invoice_evolution: list[InvoiceMini] = []
+    top_categories: list[TopCategoryItem] = []
+    recent_invoices: list[InvoiceMini] = []
+
+
 class InvoiceDetail(BaseModel):
     """
     Fatura completa com transactions e resumo.

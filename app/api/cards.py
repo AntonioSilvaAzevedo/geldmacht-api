@@ -9,7 +9,13 @@ from ..models.invoice import Invoice
 from ..models.transaction import Transaction
 from ..models.user import User
 from ..schemas.credit_card import CreditCardCreate, CreditCardOut, CreditCardUpdate
-from ..schemas.invoice import InvoiceListItem
+from ..models.category import Category
+from ..schemas.invoice import (
+    CardDashboardResponse,
+    InvoiceListItem,
+    InvoiceMini,
+    TopCategoryItem,
+)
 from ..schemas.transaction import InvoiceDetailResponse, TransactionOut
 from ..services.summary_service import calculate_invoice_summary
 
@@ -247,6 +253,147 @@ def get_invoice_detail(
         created_at=invoice.created_at,
         transactions=transactions_out,
         summary=summary,
+    )
+
+
+@router.get(
+    "/cards/{card_id}/dashboard",
+    response_model=CardDashboardResponse,
+    summary="Visão geral / dashboard do cartão",
+    description=(
+        "Retorna métricas agregadas para a página /cartao/[cardId]: "
+        "última fatura, média mensal, maior fatura, parcelas futuras, "
+        "evolução das faturas, categorias principais e faturas recentes."
+    ),
+)
+def get_card_dashboard(
+    card_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> CardDashboardResponse:
+    _get_user_card(db, current_user.id, card_id)
+
+    # 1. Faturas + total computado (apenas amount < 0)
+    invoice_rows = (
+        db.query(
+            Invoice,
+            func.coalesce(func.sum(func.abs(Transaction.amount)), 0.0).label("computed_total"),
+        )
+        .outerjoin(
+            Transaction,
+            and_(
+                Transaction.invoice_id == Invoice.id,
+                Transaction.amount < 0,
+            ),
+        )
+        .filter(
+            Invoice.card_id == card_id,
+            Invoice.user_id == current_user.id,
+        )
+        .group_by(Invoice.id)
+        .order_by(Invoice.due_month.desc())
+        .all()
+    )
+
+    def _to_mini(invoice: Invoice, computed_total: float) -> InvoiceMini:
+        return InvoiceMini(
+            id=invoice.id,
+            due_month=invoice.due_month,
+            due_date=invoice.due_date,
+            total_amount=invoice.total_amount,
+            computed_total=round(float(computed_total or 0), 2),
+        )
+
+    minis = [_to_mini(inv, total) for inv, total in invoice_rows]
+    invoice_count = len(minis)
+
+    # 2. Última fatura
+    latest_invoice = minis[0] if minis else None
+
+    # 3. Média mensal — usa total_amount quando existir, senão computed_total
+    def _value_of(m: InvoiceMini) -> float:
+        return float(m.total_amount if m.total_amount is not None else m.computed_total)
+
+    monthly_average = (
+        round(sum(_value_of(m) for m in minis) / invoice_count, 2)
+        if invoice_count
+        else 0.0
+    )
+
+    # 4. Maior fatura
+    highest_invoice = max(minis, key=_value_of, default=None) if minis else None
+
+    # 5. Parcelas futuras estimadas (apenas a partir da última fatura)
+    future_installments_total = 0.0
+    if latest_invoice is not None:
+        installment_rows = (
+            db.query(Transaction)
+            .filter(
+                Transaction.user_id == current_user.id,
+                Transaction.invoice_id == latest_invoice.id,
+                Transaction.amount < 0,
+                Transaction.installment_current.isnot(None),
+                Transaction.installment_total.isnot(None),
+            )
+            .all()
+        )
+        for tx in installment_rows:
+            if (
+                tx.installment_total is not None
+                and tx.installment_current is not None
+                and tx.installment_total > 1
+            ):
+                remaining = tx.installment_total - tx.installment_current
+                if remaining > 0:
+                    future_installments_total += abs(float(tx.amount)) * remaining
+        future_installments_total = round(future_installments_total, 2)
+
+    # 6. Evolução: ordem cronológica crescente (últimas 12)
+    invoice_evolution = list(reversed(minis[:12]))
+
+    # 7. Categorias principais a partir das transactions de TODAS as faturas
+    top_rows = (
+        db.query(
+            Transaction.category_id,
+            Category.name,
+            Category.icon,
+            func.sum(func.abs(Transaction.amount)).label("total"),
+        )
+        .outerjoin(Category, Category.id == Transaction.category_id)
+        .filter(
+            Transaction.user_id == current_user.id,
+            Transaction.card_id == card_id,
+            Transaction.amount < 0,
+            Transaction.category_id.isnot(None),
+        )
+        .group_by(Transaction.category_id, Category.name, Category.icon)
+        .order_by(func.sum(func.abs(Transaction.amount)).desc())
+        .limit(5)
+        .all()
+    )
+    top_categories = [
+        TopCategoryItem(
+            category_id=row.category_id,
+            name=row.name or "Sem nome",
+            icon=row.icon,
+            total=round(float(row.total or 0), 2),
+        )
+        for row in top_rows
+    ]
+
+    # 8. Faturas recentes (últimas 5)
+    recent_invoices = minis[:5]
+
+    return CardDashboardResponse(
+        card_id=card_id,
+        invoice_count=invoice_count,
+        latest_invoice=latest_invoice,
+        monthly_average=monthly_average,
+        highest_invoice=highest_invoice,
+        future_installments_total=future_installments_total,
+        invoice_evolution=invoice_evolution,
+        top_categories=top_categories,
+        recent_invoices=recent_invoices,
     )
 
 

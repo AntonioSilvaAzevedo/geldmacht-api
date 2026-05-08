@@ -361,7 +361,11 @@ class TestTransactionRecategorize:
         assert patch_res.status_code == 404
 
     def test_installment_fields_preserved_on_recategorize(self, client, db):
-        """Alterar categoria não deve modificar installment_current/installment_total."""
+        """Compra parcelada bloqueia recategorização e preserva os campos de parcela.
+
+        Após Feature 1 (bloqueio de categoria em sistêmicos), o PATCH com category_id
+        em uma parcelada retorna 400. installment_current/installment_total continuam
+        preservados — não são alterados pelo endpoint."""
         user = create_user(db, "a@test.com", "senha123", "User A")
 
         cat_res = client.post(
@@ -386,17 +390,19 @@ class TestTransactionRecategorize:
         tx_res = client.get("/api/transactions", headers=headers)
         tx_id = tx_res.json()[0]["id"]
 
-        # Recategorizar
+        # Tentar recategorizar — agora bloqueado para sistêmicos
         patch_res = client.patch(
             f"/api/transactions/{tx_id}",
             json={"category_id": cat_id},
             headers=headers,
         )
-        assert patch_res.status_code == 200
-        data = patch_res.json()
-        assert data["installment_current"] == 2
-        assert data["installment_total"] == 4
-        assert data["category_id"] == cat_id
+        assert patch_res.status_code == 400
+
+        # Os campos de parcela permanecem intactos no banco
+        tx_after = client.get("/api/transactions", headers=headers).json()[0]
+        assert tx_after["installment_current"] == 2
+        assert tx_after["installment_total"] == 4
+        assert tx_after["category_id"] is None
 
 
 # ═════════════════════════════════════════════════════════════════════════════
@@ -486,3 +492,239 @@ FATURA 13 ABR 2026 EMISSÃO E ENVIO 04 ABR 2026
         payment = next(t for t in txs if t.get("is_payment"))
         assert payment["installment_current"] is None
         assert payment["installment_total"] is None
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TESTES DE BLOQUEIO DE CATEGORIA EM LANÇAMENTOS SISTÊMICOS (Feature 1)
+# ═════════════════════════════════════════════════════════════════════════════
+
+def _payment_tx_fixture(card_id: int, due_month: str):
+    return {
+        "source_file": "fatura.pdf",
+        "parser_used": "faturacartaonubank",
+        "card_id": card_id,
+        "invoice": {"due_month": due_month},
+        "transactions": [
+            {
+                "date": "2026-03-11",
+                "description": "Pagamento em 11 MAR",
+                "raw_description": "Pagamento em 11 MAR",
+                "amount": 8615.00,
+                "account": "nubank_cartao",
+                "is_internal_transfer": False,
+                "is_payment": True,
+                "installment_current": None,
+                "installment_total": None,
+                "category": None,
+                "category_id": None,
+                "category_group": None,
+            }
+        ],
+    }
+
+
+class TestSystemicCategoryBlock:
+    """Compras parceladas e pagamentos da fatura não recebem category_id."""
+
+    def _create_card(self, client, headers):
+        res = client.post(
+            "/api/cards",
+            json={"name": "Nubank", "institution": "Nubank", "closing_day": 4, "due_day": 13},
+            headers=headers,
+        )
+        return res.json()["id"]
+
+    def _create_category(self, client, headers):
+        res = client.post(
+            "/api/categories",
+            json={"name": "Compras", "scope": "credit_card"},
+            headers=headers,
+        )
+        return res.json()["id"]
+
+    def test_import_strips_category_id_from_installment(self, client, db):
+        """Compra parcelada com category_id no payload é salva com category_id=null."""
+        user = create_user(db, "a@test.com", "senha123", "User A")
+        headers = _auth(user.email)
+        card_id = self._create_card(client, headers)
+        cat_id = self._create_category(client, headers)
+
+        payload = _card_tx_fixture(card_id, "2026-04", installment_current=2, installment_total=4)
+        payload["transactions"][0]["category_id"] = cat_id  # tenta forçar categoria
+
+        import_res = client.post("/api/import", json=payload, headers=headers)
+        assert import_res.status_code == 200
+
+        tx_list = client.get("/api/transactions", headers=headers).json()
+        assert len(tx_list) == 1
+        assert tx_list[0]["category_id"] is None
+        assert tx_list[0]["category"] is None
+        # Mas os campos de parcela são preservados
+        assert tx_list[0]["installment_current"] == 2
+        assert tx_list[0]["installment_total"] == 4
+
+    def test_import_strips_category_id_from_payment(self, client, db):
+        """Pagamento da fatura com category_id no payload é salvo com category_id=null."""
+        user = create_user(db, "a@test.com", "senha123", "User A")
+        headers = _auth(user.email)
+        card_id = self._create_card(client, headers)
+        cat_id = self._create_category(client, headers)
+
+        payload = _payment_tx_fixture(card_id, "2026-04")
+        payload["transactions"][0]["category_id"] = cat_id
+
+        import_res = client.post("/api/import", json=payload, headers=headers)
+        assert import_res.status_code == 200
+
+        tx_list = client.get("/api/transactions", headers=headers).json()
+        assert tx_list[0]["category_id"] is None
+        assert tx_list[0]["category"] is None
+        assert tx_list[0]["is_payment"] is True
+
+    def test_patch_rejects_category_on_installment(self, client, db):
+        """PATCH /api/transactions/{id} rejeita category_id em parcelada."""
+        user = create_user(db, "a@test.com", "senha123", "User A")
+        headers = _auth(user.email)
+        card_id = self._create_card(client, headers)
+        cat_id = self._create_category(client, headers)
+
+        # Importa parcelada
+        payload = _card_tx_fixture(card_id, "2026-04", installment_current=2, installment_total=4)
+        client.post("/api/import", json=payload, headers=headers)
+        tx_id = client.get("/api/transactions", headers=headers).json()[0]["id"]
+
+        res = client.patch(
+            f"/api/transactions/{tx_id}",
+            json={"category_id": cat_id},
+            headers=headers,
+        )
+        assert res.status_code == 400
+        assert "sistêmico" in res.json()["detail"].lower()
+
+    def test_patch_rejects_category_on_payment(self, client, db):
+        """PATCH /api/transactions/{id} rejeita category_id em pagamento da fatura."""
+        user = create_user(db, "a@test.com", "senha123", "User A")
+        headers = _auth(user.email)
+        card_id = self._create_card(client, headers)
+        cat_id = self._create_category(client, headers)
+
+        client.post("/api/import", json=_payment_tx_fixture(card_id, "2026-04"), headers=headers)
+        tx_id = client.get("/api/transactions", headers=headers).json()[0]["id"]
+
+        res = client.patch(
+            f"/api/transactions/{tx_id}",
+            json={"category_id": cat_id},
+            headers=headers,
+        )
+        assert res.status_code == 400
+
+    def test_patch_allows_description_on_installment(self, client, db):
+        """PATCH continua permitindo editar descrição em parcelada."""
+        user = create_user(db, "a@test.com", "senha123", "User A")
+        headers = _auth(user.email)
+        card_id = self._create_card(client, headers)
+
+        payload = _card_tx_fixture(card_id, "2026-04", installment_current=2, installment_total=4)
+        client.post("/api/import", json=payload, headers=headers)
+        tx_id = client.get("/api/transactions", headers=headers).json()[0]["id"]
+
+        res = client.patch(
+            f"/api/transactions/{tx_id}",
+            json={"description": "Amazon Brasil"},
+            headers=headers,
+        )
+        assert res.status_code == 200
+        assert res.json()["description"] == "Amazon Brasil"
+
+    def test_single_installment_is_not_systemic(self, client, db):
+        """installment_total=1 NÃO é compra parcelada — categoria deve funcionar."""
+        user = create_user(db, "a@test.com", "senha123", "User A")
+        headers = _auth(user.email)
+        card_id = self._create_card(client, headers)
+        cat_id = self._create_category(client, headers)
+
+        payload = _card_tx_fixture(card_id, "2026-04", installment_current=1, installment_total=1)
+        payload["transactions"][0]["category_id"] = cat_id
+
+        client.post("/api/import", json=payload, headers=headers)
+        tx_list = client.get("/api/transactions", headers=headers).json()
+        assert tx_list[0]["category_id"] == cat_id
+
+    def test_regular_transaction_recategorize_still_works(self, client, db):
+        """Lançamento comum continua aceitando recategorização."""
+        user = create_user(db, "a@test.com", "senha123", "User A")
+        headers = _auth(user.email)
+        card_id = self._create_card(client, headers)
+        cat_id = self._create_category(client, headers)
+
+        payload = _card_tx_fixture(card_id, "2026-04")  # sem parcelas
+        client.post("/api/import", json=payload, headers=headers)
+        tx_id = client.get("/api/transactions", headers=headers).json()[0]["id"]
+
+        res = client.patch(
+            f"/api/transactions/{tx_id}",
+            json={"category_id": cat_id},
+            headers=headers,
+        )
+        assert res.status_code == 200
+        assert res.json()["category_id"] == cat_id
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TESTES DO DASHBOARD DO CARTÃO (Feature 3)
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestCardDashboard:
+
+    def _create_card(self, client, headers):
+        res = client.post(
+            "/api/cards",
+            json={"name": "Nubank", "institution": "Nubank", "closing_day": 4, "due_day": 13},
+            headers=headers,
+        )
+        return res.json()["id"]
+
+    def test_dashboard_empty_when_no_invoices(self, client, db):
+        """Dashboard sem faturas retorna estrutura vazia."""
+        user = create_user(db, "a@test.com", "senha123", "User A")
+        headers = _auth(user.email)
+        card_id = self._create_card(client, headers)
+
+        res = client.get(f"/api/cards/{card_id}/dashboard", headers=headers)
+        assert res.status_code == 200
+        data = res.json()
+        assert data["card_id"] == card_id
+        assert data["invoice_count"] == 0
+        assert data["latest_invoice"] is None
+        assert data["highest_invoice"] is None
+        assert data["monthly_average"] == 0
+        assert data["future_installments_total"] == 0
+        assert data["recent_invoices"] == []
+
+    def test_dashboard_with_one_invoice(self, client, db):
+        """Dashboard agrega corretamente com uma fatura."""
+        user = create_user(db, "a@test.com", "senha123", "User A")
+        headers = _auth(user.email)
+        card_id = self._create_card(client, headers)
+
+        payload = _card_tx_fixture(card_id, "2026-04", installment_current=2, installment_total=4)
+        payload["invoice"]["total_amount"] = 1000.0
+        client.post("/api/import", json=payload, headers=headers)
+
+        res = client.get(f"/api/cards/{card_id}/dashboard", headers=headers)
+        data = res.json()
+        assert data["invoice_count"] == 1
+        assert data["latest_invoice"]["due_month"] == "2026-04"
+        assert data["monthly_average"] == 1000.0
+        # Parcelas futuras: 60.72 * (4 - 2) = 121.44
+        assert data["future_installments_total"] == 121.44
+
+    def test_dashboard_isolates_by_user(self, client, db):
+        """Dashboard de outro usuário retorna 404."""
+        user_a = create_user(db, "a@test.com", "senha123", "User A")
+        user_b = create_user(db, "b@test.com", "senha123", "User B")
+        card_id = self._create_card(client, _auth(user_a.email))
+
+        # User B tenta acessar o cartão de User A
+        res = client.get(f"/api/cards/{card_id}/dashboard", headers=_auth(user_b.email))
+        assert res.status_code == 404

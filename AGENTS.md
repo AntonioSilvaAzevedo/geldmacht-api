@@ -94,8 +94,9 @@ alembic revision -m "descricao_da_migracao"
 - `POST /api/cards`: cria cartão com `name`, `institution`, `closing_day` e `due_day`.
 - `PATCH /api/cards/{card_id}`: edita configuração do cartão do usuário.
 - `DELETE /api/cards/{card_id}`: remove cartão e exclui em cascata transactions + invoices vinculadas. Operação atômica.
-- `GET /api/cards/{card_id}/invoices`: lista invoices reais (`Invoice` table) com totais calculados das transactions.
+- `GET /api/cards/{card_id}/invoices`: lista invoices reais (`Invoice` table) com totais calculados das transactions. Usado para navegação entre faturas e listagem completa.
 - `GET /api/cards/{card_id}/invoices/{invoice_id}`: retorna fatura completa (metadados + transactions + summary).
+- `GET /api/cards/{card_id}/dashboard`: visão geral agregada do cartão — última fatura, média mensal, maior fatura, parcelas futuras estimadas, evolução, top categorias e faturas recentes.
 - `GET /api/cards/{card_id}/invoices-by-month/{due_month}`: busca invoice por `due_month` (compat. legada com `/cartao/[cardId]/[anoMes]`).
 - `GET /api/categories?scope=credit_card`: lista categorias manuais do usuário para fatura de cartão.
 - `POST /api/categories`: cria categoria manual. Neste momento aceita apenas `scope = credit_card`.
@@ -257,6 +258,59 @@ Aceita `category_id` para alterar a categoria de uma transaction já importada.
 - `category_id = 0` remove a categoria (seta `category_id = null` e `category = null`).
 - `category_id` deve pertencer ao `user_id` autenticado e ter `scope = credit_card`.
 - `installment_current`, `installment_total`, `card_id`, `invoice_id` **nunca** são alterados por este endpoint.
+
+## Bloqueio de Categoria em Lançamentos Sistêmicos
+
+Lançamentos sistêmicos não recebem `category_id` manual. São considerados sistêmicos:
+
+1. **Compra parcelada** — `installment_current IS NOT NULL AND installment_total IS NOT NULL AND installment_total > 1`.
+2. **Pagamento da fatura** — `is_payment = True` (detectado pelo parser pelos padrões `Pagamento em DD MMM`, `Pagamento em DD/MM`, `Pagamento recebido em DD MMM`, etc.).
+
+### Comportamento por endpoint
+
+**`POST /api/import`** — *normaliza silenciosamente.* Se o frontend enviar `category_id` para um lançamento sistêmico, o backend salva com `category_id = null` e `category = null`. Não retorna erro — evita quebrar fluxo de importação.
+
+**`PATCH /api/transactions/{id}`** — *rejeita explicitamente.* Tentar definir `category_id` (qualquer valor, inclusive `0`) em uma transaction sistêmica retorna:
+
+```http
+400 Bad Request
+{
+  "detail": "Este lançamento é sistêmico e não pode ser categorizado manualmente."
+}
+```
+
+A descrição (`description`) continua editável em sistêmicos. Apenas `category_id`/`category` são bloqueados.
+
+### Não criar categorias sistêmicas
+
+Não existem categorias `"Compras parceladas"` ou `"Pagamento da fatura"` na tabela `categories` — essas são classificações puramente visuais derivadas dos campos da `Transaction`. Não devem ser criadas automaticamente.
+
+## Dashboard do Cartão
+
+`GET /api/cards/{card_id}/dashboard` retorna um agregado para a página `/cartao/[cardId]`.
+
+Resposta (`CardDashboardResponse`):
+
+| Campo | Descrição |
+|---|---|
+| `card_id` | ID do cartão |
+| `invoice_count` | Total de faturas do cartão |
+| `latest_invoice` | Fatura mais recente (`InvoiceMini`) |
+| `monthly_average` | Média do `total_amount` (ou `computed_total`) das faturas |
+| `highest_invoice` | Fatura com maior `total_amount` |
+| `future_installments_total` | Soma de `abs(amount) * (installment_total - installment_current)` para parcelas com `remaining > 0` da **última fatura** |
+| `invoice_evolution` | Lista cronológica crescente das últimas 12 faturas (para gráfico) |
+| `top_categories` | Top 5 categorias por gasto absoluto (`amount < 0`) considerando todas as faturas do cartão |
+| `recent_invoices` | Últimas 5 faturas (ordem cronológica decrescente) |
+
+`InvoiceMini`: `{ id, due_month, due_date, total_amount, computed_total }`.
+`TopCategoryItem`: `{ category_id, name, icon, total }`.
+
+Regras:
+
+- Valida que `card_id` pertence ao usuário autenticado (`_get_user_card`). Caso contrário, `404`.
+- Categorias sistêmicas não aparecem em `top_categories` porque parcelas e pagamentos têm `category_id = null`.
+- Se não houver faturas, retorna estrutura com `invoice_count = 0`, `latest_invoice = null`, `highest_invoice = null`, `monthly_average = 0`, `future_installments_total = 0`, listas vazias.
 
 ## Importação de Fatura por Cartão
 
