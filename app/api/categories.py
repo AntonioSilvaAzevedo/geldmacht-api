@@ -106,7 +106,9 @@ def list_categories(
         # Valida que o cartão é do usuário (404 se for de outro).
         _validate_card_for_user(db, current_user.id, card_id)
         query = query.filter(or_(Category.card_id.is_(None), Category.card_id == card_id))
-    return query.order_by(Category.parent_id.is_(None).desc(), Category.name).all()
+    # Ordena apenas por nome — o frontend agrupa parents/subs via parent_id.
+    # Mantém compatibilidade entre PostgreSQL (produção) e SQLite (testes).
+    return query.order_by(Category.name).all()
 
 
 @router.post("/categories", response_model=CategoryOut, summary="Criar categoria")

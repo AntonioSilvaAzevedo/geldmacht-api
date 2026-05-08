@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .api import cards, categories, dashboard, import_transactions, release_notes, transactions, upload
+from .api import cards, categories, dashboard, import_transactions, onboarding, release_notes, transactions, upload
 from .api.auth import router as auth_router
 from .services.release_notes_seed import seed_release_notes
 
@@ -51,6 +51,34 @@ app.include_router(cards.router, prefix="/api", tags=["Cartões"])
 app.include_router(categories.router, prefix="/api", tags=["Categorias"])
 app.include_router(dashboard.router, prefix="/api", tags=["Dashboard"])
 app.include_router(release_notes.router, prefix="/api", tags=["Release Notes"])
+app.include_router(onboarding.router, prefix="/api", tags=["Onboarding"])
+
+
+@app.on_event("startup")
+def _run_alembic_upgrade() -> None:
+    """
+    Aplica migrations no startup, em produção. Evita situação onde o backend
+    sobe com schema desatualizado (ex: coluna nova ainda não criada) e endpoints
+    quebram silenciosamente.
+
+    Controle por env: AUTO_MIGRATE_ON_STARTUP (default "1"). Defina "0" para desligar.
+    """
+    import os
+    if os.getenv("AUTO_MIGRATE_ON_STARTUP", "1") not in ("1", "true", "True"):
+        return
+    try:
+        from alembic import command
+        from alembic.config import Config
+        from pathlib import Path
+        cfg_path = Path(__file__).resolve().parent.parent / "alembic.ini"
+        if not cfg_path.exists():
+            logging.getLogger(__name__).warning("alembic.ini não encontrado em %s — pulando upgrade", cfg_path)
+            return
+        cfg = Config(str(cfg_path))
+        command.upgrade(cfg, "head")
+        logging.getLogger(__name__).info("Alembic upgrade head aplicado no startup.")
+    except Exception:
+        logging.getLogger(__name__).exception("Falha ao aplicar migrations no startup")
 
 
 @app.on_event("startup")

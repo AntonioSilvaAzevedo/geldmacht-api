@@ -103,8 +103,11 @@ alembic revision -m "descricao_da_migracao"
 - `PATCH /api/categories/{category_id}`: edita categoria. Sentinelas: `card_id=0` torna global; `parent_id=0` torna categoria principal; `invoice_budget_limit=0` remove o limite.
 - `DELETE /api/categories/{category_id}`: remove categoria e suas subcategorias (cascade), desvinculando transações que usavam qualquer um dos `category_id` removidos.
 - `GET /api/dashboard/monthly`: agrega transações por mês para o dashboard anual.
-- `GET /api/release-notes/pending`: retorna a release note mais recente com `show_modal=true` que o usuário ainda não visualizou. `204 No Content` quando não há nenhuma pendente.
-- `POST /api/release-notes/{id}/mark-seen`: registra que o usuário viu a release note. Idempotente — chamadas repetidas não duplicam registro.
+- `GET /api/release-notes/pending`: retorna **lista acumulativa** de release notes com `show_modal=true` que o usuário ainda não visualizou, ordenadas da mais antiga para a mais recente. Sempre retorna `{"releases": [...]}` — lista vazia quando nada pendente. (Antigo: retornava única release ou 204; agora sempre lista.)
+- `POST /api/release-notes/mark-seen`: marca **múltiplas** release notes como vistas. Body: `{"release_note_ids": [int, int, ...]}`. Idempotente. Lista vazia é aceita. IDs inexistentes são ignorados silenciosamente.
+- `POST /api/release-notes/{id}/mark-seen`: legado/compat. — marca **uma** release como vista. Mantido para clientes antigos. Prefira o bulk.
+- `GET /api/onboarding/status`: retorna `{ should_show_onboarding, onboarding_key, seen_at }` — se o usuário ainda precisa ver o onboarding inicial.
+- `POST /api/onboarding/mark-seen`: define `users.onboarding_seen_at = now()`. Idempotente — chamadas subsequentes preservam o timestamp original.
 
 ## Convenções de Dados
 
@@ -362,6 +365,58 @@ Regras:
 - Categorias sistêmicas não aparecem em `top_categories` porque parcelas e pagamentos têm `category_id = null`.
 - Se não houver faturas, retorna estrutura com `invoice_count = 0`, `latest_invoice = null`, `highest_invoice = null`, `monthly_average = 0`, `future_installments_total = 0`, listas vazias.
 
+## Onboarding Inicial
+
+Mecanismo simples para apresentar o app a novos usuários **uma única vez**.
+
+### Modelo
+
+Campo `users.onboarding_seen_at` (`DateTime` nullable). Migration `e3f4a5b6c7d8`.
+
+- `null` → usuário ainda não viu o onboarding inicial (ex: recém-cadastrado).
+- preenchido → já marcou como visto. Não recebe novamente.
+
+Preferimos campo no `User` em vez de tabela separada porque o onboarding atual é único e simples. Se no futuro houver múltiplos onboardings (por feature, tour guiado etc.), podemos migrar para uma tabela `user_onboarding_views` com `key` discriminadora.
+
+### Endpoints
+
+- `GET /api/onboarding/status` — retorna:
+  ```json
+  {
+    "should_show_onboarding": true,
+    "onboarding_key": "initial_app_overview",
+    "seen_at": null
+  }
+  ```
+  Quando o usuário já marcou como visto, `should_show_onboarding=false` e `seen_at` traz a data.
+
+- `POST /api/onboarding/mark-seen` — marca como visto. **Idempotente** — se já estava marcado, mantém o timestamp original e retorna sucesso. Resposta: `{ success: true, seen_at: ... }`.
+
+### Regras
+
+- Cada usuário só pode marcar o próprio onboarding (rota usa `get_current_user`).
+- Não confundir com release notes — onboarding apresenta o sistema; release notes anunciam novidades por versão. São fluxos independentes.
+- A chave atual é `initial_app_overview`. Para futuras evoluções (ex: tour de cartões, tour de categorias), criar novas chaves e considerar migrar para tabela separada.
+
+## Auto-Migration no Startup
+
+Para evitar discrepâncias entre schema e código em produção (ex: backend novo subindo antes da migration ser aplicada), o app aplica `alembic upgrade head` automaticamente no `startup` (`@app.on_event("startup")` em `app/main.py::_run_alembic_upgrade`).
+
+- Lê `app/alembic.ini` se existir e roda `command.upgrade(cfg, "head")`.
+- **Idempotente** — Alembic só aplica revisions ainda não registradas em `alembic_version`.
+- Pode ser desligado com `AUTO_MIGRATE_ON_STARTUP=0` (útil em CI/jobs onde o upgrade já é feito por outro processo).
+- Falha no upgrade gera log com stacktrace mas **não derruba o app** — o operador pode acompanhar pelos logs e aplicar manualmente.
+
+Esse mecanismo foi a correção fundamental para o bug das categorias em produção: sem ele, era possível deployar o backend com o modelo `Category` apontando para colunas (`card_id`, `parent_id`, `invoice_budget_limit`) que ainda não existiam, causando erros silenciosos na listagem.
+
+## Listagem de Categorias — robustez
+
+Endpoint `GET /api/categories?scope=credit_card[&card_id=N]` (`app/api/categories.py::list_categories`):
+
+- **Filtros**: `Category.user_id == current_user.id` sempre; `scope` quando enviado; `card_id` retorna globais (`card_id IS NULL`) + específicas do cartão.
+- **Ordenação**: `ORDER BY name` apenas. A ordenação anterior (`parent_id IS NULL DESC, name`) foi removida para garantir compatibilidade entre PostgreSQL (produção) e SQLite. O frontend agrupa parents/subs no cliente, então a ordem hierárquica não é responsabilidade do banco.
+- **Resposta**: lista plana de `CategoryOut` — parents e subs juntos. O frontend filtra `parent_id == null` para identificar parents.
+
 ## Release Notes / Notas de Atualização
 
 Models: `app/models/release_note.py::ReleaseNote` e `UserReleaseNoteView`.
@@ -399,23 +454,31 @@ Registro de visualização. Garante exibição única do modal por usuário/vers
 ### Endpoints
 
 - `GET /api/release-notes/pending`
-  - Retorna a release note mais recente com `show_modal=True` que o usuário ainda **não** visualizou.
-  - Ordem: `released_at desc nullslast`, depois `created_at desc`, depois `id desc`.
-  - Quando não há nenhuma pendente, retorna **`204 No Content`**.
+  - Retorna **lista acumulativa** de release notes com `show_modal=True` que o usuário ainda **não** visualizou.
+  - Ordem: `released_at asc nullslast`, depois `created_at asc`, depois `id asc` (cronológico crescente — mais antiga primeiro).
+  - Sempre retorna **`200 OK`** com `{"releases": [...]}`. Lista vazia quando nada pendente.
   - Requer autenticação.
 
-- `POST /api/release-notes/{release_note_id}/mark-seen`
-  - Cria `UserReleaseNoteView` se ainda não existir; **idempotente**.
-  - `404` quando a release note não existe.
-  - Retorna `{ "success": true, "seen": true }`.
+- `POST /api/release-notes/mark-seen` (preferencial — bulk)
+  - Body: `{"release_note_ids": [int, int, ...]}`.
+  - Cria `UserReleaseNoteView` para cada id que ainda não tem registro; **idempotente**.
+  - IDs inexistentes são ignorados silenciosamente (não retorna 404).
+  - Lista vazia é aceita e retorna sucesso.
+  - Resposta: `{ "success": true, "seen": true, "marked_as_seen": [ids válidos] }`.
   - Requer autenticação.
 
-### Regra de exibição única
+- `POST /api/release-notes/{release_note_id}/mark-seen` (legado — single)
+  - Mantido para compatibilidade. `404` quando a release não existe.
+  - Resposta: mesmo schema do bulk com `marked_as_seen: [id]`.
+  - Internamente reusa `_record_views`.
 
-- Só são pendentes release notes com `show_modal=True`.
-- Após `mark-seen`, o usuário não recebe mais aquela versão como pendente.
-- Quando uma versão nova é cadastrada (`show_modal=True`), volta a aparecer como pendente para usuários que ainda não a visualizaram.
-- `show_modal=False` nunca dispara modal — usado para ajustes internos / correções pequenas que não devem ser comunicadas ao usuário.
+### Regra acumulativa
+
+- Pending **acumula** todas as releases não vistas — usuários que ficam tempo sem entrar recebem todo o histórico que perderam, em ordem cronológica.
+- Cada deploy cria sua própria `ReleaseNote` com `version` única. **Não sobrescrever** releases antigas — o histórico versionado é a fonte de verdade do mecanismo acumulativo.
+- Após bulk `mark-seen`, todas as visualizações ficam registradas e o usuário não vê novamente.
+- Quando uma versão nova com `show_modal=True` é cadastrada, ela vira pendente para todos os usuários (independente de já terem visto versões anteriores).
+- `show_modal=False` nunca dispara — usado para ajustes internos. Não aparece no `pending`.
 
 ### Cadastro de release notes (seed)
 
@@ -603,6 +666,7 @@ Todo parser deve:
 - Migration `a1b2c3d4e5f6` adiciona coluna `icon` (nullable String(50)) na tabela `categories`.
 - Migration `c1d2e3f4a5b6` adiciona em `categories`: `card_id` (FK `credit_cards`, nullable, ON DELETE SET NULL), `parent_id` (self-FK, nullable, ON DELETE CASCADE) e `invoice_budget_limit` (Float, nullable). Índices em `card_id` e `parent_id`.
 - Migration `d2e3f4a5b6c7` cria `release_notes` (notas de atualização por versão) e `user_release_note_views` (registro de visualização por usuário, com unique `user_id + release_note_id`).
+- Migration `e3f4a5b6c7d8` adiciona `users.onboarding_seen_at` (DateTime nullable) para controle do onboarding inicial.
 
 ## Cuidados de Segurança
 

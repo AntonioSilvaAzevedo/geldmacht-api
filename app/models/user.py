@@ -13,6 +13,8 @@ class User(Base):
     hashed_password  = Column(String(255), nullable=True)  # nullable: Google OAuth não tem senha
     google_id        = Column(String(255), nullable=True, unique=True)
     is_active        = Column(Boolean, default=True, nullable=False)
+    # Onboarding inicial — null = nunca visualizou; preenchido = já marcou como visto.
+    onboarding_seen_at = Column(DateTime(timezone=True), nullable=True)
     created_at       = Column(DateTime(timezone=True), server_default=func.now())
     updated_at       = Column(DateTime(timezone=True), onupdate=func.now())
 

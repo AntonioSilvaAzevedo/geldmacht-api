@@ -50,6 +50,21 @@ class _ReleaseNoteSpec(TypedDict, total=False):
 
 RELEASE_NOTES: list[_ReleaseNoteSpec] = [
     {
+        "version": "0.4.0",
+        "title": "Ajustes finos no app",
+        "description": (
+            "Corrigimos a listagem de categorias e melhoramos a experiência "
+            "ao entrar no app após uma atualização."
+        ),
+        "items": [
+            "Suas categorias voltam a aparecer corretamente na tela de Categorias.",
+            "Mensagens mais claras quando ocorre algum erro de carregamento.",
+            "Ao publicarmos atualizações importantes, pediremos um novo login para garantir uma experiência consistente.",
+        ],
+        "show_modal": True,
+        "released_at": "2026-05-08T00:00:00",
+    },
+    {
         "version": "0.3.0",
         "title": "Melhorias em Categorias",
         "description": (
