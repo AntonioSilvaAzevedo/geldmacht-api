@@ -12,15 +12,9 @@ from ..models.invoice import Invoice
 from ..models.transaction import Transaction
 from ..schemas.transaction import InvoiceTransactionsResponse, TransactionOut, TransactionUpdate
 from ..services.summary_service import calculate_invoice_summary
+from ..services.transaction_serialization import serialize_transaction_out
 
 router = APIRouter()
-
-
-def _serialize_transaction(tx: Transaction) -> TransactionOut:
-    out = TransactionOut.model_validate(tx)
-    out.account_type = tx.account.type if tx.account else None
-    out.category_name = tx.category_ref.name if tx.category_ref else tx.category
-    return out
 
 
 @router.patch(
@@ -37,8 +31,10 @@ def update_transaction(
 ) -> TransactionOut:
     tx = (
         db.query(Transaction)
-        .options(joinedload(Transaction.account))
-        .options(joinedload(Transaction.category_ref))
+        .options(
+            joinedload(Transaction.account),
+            joinedload(Transaction.category_ref).joinedload(Category.parent),
+        )
         .filter(
             Transaction.id      == tx_id,
             Transaction.user_id == current_user.id,
@@ -87,8 +83,20 @@ def update_transaction(
             tx.category_id = category.id
             tx.category = category.name
     db.commit()
-    db.refresh(tx)
-    return _serialize_transaction(tx)
+    tx_out = (
+        db.query(Transaction)
+        .options(
+            joinedload(Transaction.account),
+            joinedload(Transaction.category_ref).joinedload(Category.parent),
+        )
+        .filter(
+            Transaction.id == tx_id,
+            Transaction.user_id == current_user.id,
+        )
+        .first()
+    )
+    assert tx_out is not None
+    return serialize_transaction_out(tx_out)
 
 
 @router.get(
@@ -111,7 +119,7 @@ def get_invoice_transactions(
 ) -> InvoiceTransactionsResponse:
     base = db.query(Transaction).options(
         joinedload(Transaction.account),
-        joinedload(Transaction.category_ref),
+        joinedload(Transaction.category_ref).joinedload(Category.parent),
     ).filter(Transaction.user_id == current_user.id)
 
     # ── Busca por invoice_id (prioritária) ───────────────────────────────────
@@ -124,7 +132,7 @@ def get_invoice_transactions(
             raise HTTPException(status_code=404, detail="Fatura não encontrada.")
         query = base.filter(Transaction.invoice_id == invoice_id)
         rows = query.order_by(Transaction.date.desc()).limit(limit).all()
-        transactions = [_serialize_transaction(tx) for tx in rows]
+        transactions = [serialize_transaction_out(tx) for tx in rows]
         summary = calculate_invoice_summary([tx.model_dump() for tx in transactions])
         return InvoiceTransactionsResponse(transactions=transactions, summary=summary)
 
@@ -162,7 +170,7 @@ def get_invoice_transactions(
                 query = base.filter(False)
 
     rows         = query.order_by(Transaction.date.desc()).limit(limit).all()
-    transactions = [_serialize_transaction(tx) for tx in rows]
+    transactions = [serialize_transaction_out(tx) for tx in rows]
     summary      = calculate_invoice_summary([tx.model_dump() for tx in transactions])
     return InvoiceTransactionsResponse(transactions=transactions, summary=summary)
 
@@ -184,7 +192,10 @@ def list_transactions(
 ) -> list[TransactionOut]:
     query = (
         db.query(Transaction)
-        .options(joinedload(Transaction.account), joinedload(Transaction.category_ref))
+        .options(
+            joinedload(Transaction.account),
+            joinedload(Transaction.category_ref).joinedload(Category.parent),
+        )
         .filter(Transaction.user_id == current_user.id)
     )
 
@@ -211,4 +222,4 @@ def list_transactions(
         )
 
     rows = query.order_by(Transaction.date.desc()).offset(skip).limit(limit).all()
-    return [_serialize_transaction(tx) for tx in rows]
+    return [serialize_transaction_out(tx) for tx in rows]

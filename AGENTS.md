@@ -95,7 +95,7 @@ alembic revision -m "descricao_da_migracao"
 - `PATCH /api/cards/{card_id}`: edita configuração do cartão do usuário.
 - `DELETE /api/cards/{card_id}`: remove cartão e exclui em cascata transactions + invoices vinculadas. Operação atômica.
 - `GET /api/cards/{card_id}/invoices`: lista invoices reais (`Invoice` table) com totais calculados das transactions. Usado para navegação entre faturas e listagem completa.
-- `GET /api/cards/{card_id}/invoices/{invoice_id}`: retorna fatura completa (metadados + transactions + summary).
+- `GET /api/cards/{card_id}/invoices/{invoice_id}`: retorna fatura completa (metadados + transactions + summary). Cada item em `transactions` usa `TransactionOut` com enriquecimento de categoria: `category_display_label` (ex.: `Alimentação / Mercado`), `category_icon`, `category_parent_id`, `category_parent_name`, `category_invoice_budget_limit` — preenchidos via `joinedload` de `category_ref` e `category_ref.parent` (`app/services/transaction_serialization.py`).
 - `GET /api/cards/{card_id}/dashboard`: visão geral agregada do cartão — última fatura, média mensal, maior fatura, parcelas futuras estimadas, evolução, top categorias e faturas recentes.
 - `GET /api/cards/{card_id}/invoices-by-month/{due_month}`: busca invoice por `due_month` (compat. legada com `/cartao/[cardId]/[anoMes]`).
 - `GET /api/categories?scope=credit_card[&card_id=N]`: lista categorias manuais do usuário. Quando `card_id` é informado, retorna categorias globais (`card_id=null`) + específicas daquele cartão.
@@ -350,7 +350,7 @@ O backend não muda — o filtro é responsabilidade do frontend, que usa o help
 
 ### Recategorização de transactions (`PATCH /api/transactions/{id}`)
 
-Aceita `category_id` para alterar a categoria de uma transaction já importada.
+Aceita `category_id` para alterar a categoria de uma transaction já importada. A resposta é `TransactionOut` com os mesmos campos enriquecidos de categoria (`category_display_label`, `category_icon`, `category_invoice_budget_limit`, etc.) usados no detalhe da fatura.
 
 - `category_id = 0` remove a categoria (seta `category_id = null` e `category = null`).
 - `category_id` deve pertencer ao `user_id` autenticado e ter `scope = credit_card`.

@@ -33,6 +33,12 @@ class TransactionOut(TransactionBase):
     invoice_id: int | None = None     # âncora principal da fatura
     category_id: int | None = None
     category_name: str | None = None
+    # Enriquecimento a partir de Category (+ parent), preenchido pelo serializer
+    category_icon: str | None = None
+    category_parent_id: int | None = None
+    category_parent_name: str | None = None
+    category_invoice_budget_limit: float | None = None
+    category_display_label: str | None = None
     source_file: str | None = None
     imported_at: datetime
     reference_month: str | None = None   # legado — mantido para compatibilidade

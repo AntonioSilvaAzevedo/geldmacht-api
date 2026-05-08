@@ -943,3 +943,32 @@ class TestCategoryEvolution:
         payload["transactions"][0]["category_id"] = cat["id"]
         res = client.post("/api/import", json=payload, headers=headers)
         assert res.status_code == 200
+
+    def test_invoice_detail_transaction_includes_hierarchical_category(self, client, db):
+        """GET /cards/{id}/invoices/{invoice_id} enriquece a transação com label pai/filha e limite."""
+        user = create_user(db, "u@test.com", "x", "U")
+        headers = _auth(user.email)
+        cid = self._create_card(client, headers)
+        parent = client.post("/api/categories", json={
+            "name": "Alimentação", "scope": "credit_card",
+        }, headers=headers).json()
+        sub = client.post("/api/categories", json={
+            "name": "Mercado",
+            "scope": "credit_card",
+            "parent_id": parent["id"],
+            "invoice_budget_limit": 500.0,
+            "icon": "shopping-cart",
+        }, headers=headers).json()
+        payload = _card_tx_fixture(cid, "2026-04")
+        payload["transactions"][0]["category_id"] = sub["id"]
+        import_res = client.post("/api/import", json=payload, headers=headers)
+        assert import_res.status_code == 200
+        inv_id = import_res.json()["invoice_id"]
+        detail = client.get(f"/api/cards/{cid}/invoices/{inv_id}", headers=headers)
+        assert detail.status_code == 200
+        tx0 = detail.json()["transactions"][0]
+        assert tx0["category_display_label"] == "Alimentação / Mercado"
+        assert tx0["category_parent_name"] == "Alimentação"
+        assert tx0["category_parent_id"] == parent["id"]
+        assert tx0["category_invoice_budget_limit"] == 500.0
+        assert tx0["category_icon"] == "shopping-cart"

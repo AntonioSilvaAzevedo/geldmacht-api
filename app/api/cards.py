@@ -16,8 +16,9 @@ from ..schemas.invoice import (
     InvoiceMini,
     TopCategoryItem,
 )
-from ..schemas.transaction import InvoiceDetailResponse, TransactionOut
+from ..schemas.transaction import InvoiceDetailResponse
 from ..services.summary_service import calculate_invoice_summary
+from ..services.transaction_serialization import serialize_transaction_out
 
 router = APIRouter()
 
@@ -45,13 +46,6 @@ def _label_for_due_month(due_month: str) -> str:
         return f"Vencimento em {_MONTH_LABELS.get(month, month)}/{year}"
     except ValueError:
         return due_month
-
-
-def _serialize_transaction(tx: Transaction) -> TransactionOut:
-    out = TransactionOut.model_validate(tx)
-    out.account_type = tx.account.type if tx.account else None
-    out.category_name = tx.category_ref.name if tx.category_ref else tx.category
-    return out
 
 
 @router.get("/cards", response_model=list[CreditCardOut], summary="Listar cartões")
@@ -234,7 +228,7 @@ def get_invoice_detail(
         db.query(Transaction)
         .options(
             joinedload(Transaction.account),
-            joinedload(Transaction.category_ref),
+            joinedload(Transaction.category_ref).joinedload(Category.parent),
         )
         .filter(
             Transaction.invoice_id == invoice_id,
@@ -244,7 +238,7 @@ def get_invoice_detail(
         .all()
     )
 
-    transactions_out = [_serialize_transaction(tx) for tx in transactions_rows]
+    transactions_out = [serialize_transaction_out(tx) for tx in transactions_rows]
     summary = calculate_invoice_summary([tx.model_dump() for tx in transactions_out])
 
     return InvoiceDetailResponse(
