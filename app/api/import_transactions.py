@@ -231,6 +231,16 @@ def import_selected_transactions(
                 ).first()
                 if not category:
                     raise HTTPException(status_code=404, detail="Categoria não encontrada.")
+                # Categoria deve ser global ou do mesmo cartão da fatura.
+                if (
+                    category.card_id is not None
+                    and card is not None
+                    and category.card_id != card.id
+                ):
+                    raise HTTPException(
+                        status_code=400,
+                        detail="Categoria não é aplicável a este cartão.",
+                    )
                 category_cache[tx.category_id] = category
             category = category_cache[tx.category_id]
 

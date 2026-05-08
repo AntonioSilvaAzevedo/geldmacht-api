@@ -14,8 +14,9 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .api import cards, categories, dashboard, import_transactions, transactions, upload
+from .api import cards, categories, dashboard, import_transactions, release_notes, transactions, upload
 from .api.auth import router as auth_router
+from .services.release_notes_seed import seed_release_notes
 
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
@@ -49,6 +50,17 @@ app.include_router(transactions.router, prefix="/api", tags=["Transações"])
 app.include_router(cards.router, prefix="/api", tags=["Cartões"])
 app.include_router(categories.router, prefix="/api", tags=["Categorias"])
 app.include_router(dashboard.router, prefix="/api", tags=["Dashboard"])
+app.include_router(release_notes.router, prefix="/api", tags=["Release Notes"])
+
+
+@app.on_event("startup")
+def _run_release_notes_seed() -> None:
+    """Idempotente — só insere versões ainda não cadastradas."""
+    try:
+        seed_release_notes()
+    except Exception:
+        # Não trava o startup do app por falha de seed (logs já registrados).
+        logging.getLogger(__name__).exception("Falha ao seedar release notes no startup")
 
 
 @app.get("/", tags=["Health"])

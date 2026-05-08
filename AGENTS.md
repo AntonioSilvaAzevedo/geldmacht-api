@@ -98,11 +98,13 @@ alembic revision -m "descricao_da_migracao"
 - `GET /api/cards/{card_id}/invoices/{invoice_id}`: retorna fatura completa (metadados + transactions + summary).
 - `GET /api/cards/{card_id}/dashboard`: visão geral agregada do cartão — última fatura, média mensal, maior fatura, parcelas futuras estimadas, evolução, top categorias e faturas recentes.
 - `GET /api/cards/{card_id}/invoices-by-month/{due_month}`: busca invoice por `due_month` (compat. legada com `/cartao/[cardId]/[anoMes]`).
-- `GET /api/categories?scope=credit_card`: lista categorias manuais do usuário para fatura de cartão.
-- `POST /api/categories`: cria categoria manual. Neste momento aceita apenas `scope = credit_card`.
-- `PATCH /api/categories/{category_id}`: edita categoria do usuário.
-- `DELETE /api/categories/{category_id}`: remove categoria do usuário e desvincula transações que usavam `category_id`.
+- `GET /api/categories?scope=credit_card[&card_id=N]`: lista categorias manuais do usuário. Quando `card_id` é informado, retorna categorias globais (`card_id=null`) + específicas daquele cartão.
+- `POST /api/categories`: cria categoria/subcategoria manual. Aceita `name`, `scope=credit_card`, `icon`, `color`, `card_id`, `parent_id`, `invoice_budget_limit`.
+- `PATCH /api/categories/{category_id}`: edita categoria. Sentinelas: `card_id=0` torna global; `parent_id=0` torna categoria principal; `invoice_budget_limit=0` remove o limite.
+- `DELETE /api/categories/{category_id}`: remove categoria e suas subcategorias (cascade), desvinculando transações que usavam qualquer um dos `category_id` removidos.
 - `GET /api/dashboard/monthly`: agrega transações por mês para o dashboard anual.
+- `GET /api/release-notes/pending`: retorna a release note mais recente com `show_modal=true` que o usuário ainda não visualizou. `204 No Content` quando não há nenhuma pendente.
+- `POST /api/release-notes/{id}/mark-seen`: registra que o usuário viu a release note. Idempotente — chamadas repetidas não duplicam registro.
 
 ## Convenções de Dados
 
@@ -191,23 +193,71 @@ Campos:
 - `id`
 - `user_id`
 - `name`
-- `scope`
+- `scope` — apenas `credit_card` por enquanto. Obrigatório.
 - `color` — legado, mantido para compatibilidade. Não é o principal identificador visual.
 - `icon` — chave de ícone (ex: `"shopping-cart"`, `"utensils"`, `"car"`). Nullable. Migration `a1b2c3d4e5f6`.
+- `card_id` — FK para `credit_cards`, **nullable**. `null` = categoria global (todos os cartões); preenchido = exclusiva do cartão. Migration `c1d2e3f4a5b6`. `ON DELETE SET NULL`.
+- `parent_id` — FK self-referencial para `categories`, nullable. `null` = categoria principal; preenchido = subcategoria. Profundidade máxima de 1 nível (validado no app). `ON DELETE CASCADE`. Migration `c1d2e3f4a5b6`.
+- `invoice_budget_limit` — Float, nullable. Limite de gasto **por fatura**. Quando informado deve ser `> 0`. Não bloqueia lançamentos; é usado apenas para indicador visual no frontend. Migration `c1d2e3f4a5b6`.
 - `created_at`
 - `updated_at`
 
-Regras:
+Regras gerais:
 
 - Neste momento só existe `scope = credit_card`.
 - Categorias são sempre filtradas por `user_id`.
 - Importação de fatura aceita `category_id` por transação, valida que a categoria pertence ao usuário e salva também `category` com o nome atual para compatibilidade.
 - Não existe categorização automática, regra por descrição, sugestão inteligente ou IA.
-- `PATCH /api/categories/{id}` aceita `name`, `color` e `icon`. Atualiza apenas os campos enviados.
+- `PATCH /api/categories/{id}` aceita `name`, `color`, `icon`, `card_id`, `parent_id`, `invoice_budget_limit`. Atualiza apenas os campos enviados.
 - `icon` é a representação visual principal. `color` é mantido como legado.
 - O backend armazena apenas a chave do ícone (string). Ex: `"shopping-cart"`, não componente visual.
 - Para `icon`: valor `null` = não altera; string vazia = salva como `null` (limpeza explícita).
 - `PATCH /api/categories/{id}` valida que a categoria pertence ao `user_id` autenticado.
+
+### Aplicação por cartão (`card_id`)
+
+- `card_id = null` → categoria global. Aparece em qualquer fatura.
+- `card_id = N` → categoria exclusiva do cartão `N`. Só aparece em faturas desse cartão.
+- Não há relação muitos-para-muitos. A regra é: global OU um cartão específico.
+- `POST /api/categories` valida que o cartão pertence ao usuário autenticado. Cartão de outro usuário → `404`.
+- `PATCH` aceita sentinela: `card_id = 0` limpa o vínculo (vira global); `card_id = N` define o cartão; `card_id` ausente/`null` = não altera.
+- Filtro: `GET /api/categories?scope=credit_card&card_id=N` retorna **categorias globais (`card_id = null`) + categorias específicas do cartão N**. Categorias de outro cartão são excluídas. Se `card_id` não pertence ao usuário, retorna `404`.
+
+### Subcategorias (`parent_id`)
+
+- `parent_id = null` → categoria principal.
+- `parent_id = N` → subcategoria filha da categoria `N`.
+- **Profundidade máxima 1**: subcategoria não pode ter subcategoria. `POST /categories` com `parent_id` apontando para uma subcategoria retorna `400`.
+- Categoria pai deve pertencer ao mesmo `user_id`. Senão `404`.
+- Categoria pai deve ter o mesmo `scope`. Se diferente, `400`.
+- Subcategoria respeita o `card_id` da categoria pai:
+  - Se a pai é global (`card_id = null`), a sub pode ser global ou definir um `card_id` próprio.
+  - Se a pai é específica (`card_id = N`), a sub só pode ter `card_id = N` ou herdar (não enviar). Divergência → `400`.
+- Quando `card_id` não é enviado e a pai é específica, a sub herda o `card_id` da pai automaticamente.
+- Não permite ciclo: `parent_id` não pode ser igual ao `id` da própria categoria. Verificado no `PATCH`.
+- Não é permitido transformar uma categoria em subcategoria se ela já tem filhas. Validação no `PATCH` retorna `400`.
+- Exclusão (`DELETE`) usa cascade: ao remover a categoria pai, suas subcategorias também são removidas e todas as transactions vinculadas têm `category_id` zerado.
+
+### Limite de gasto por fatura (`invoice_budget_limit`)
+
+- Opcional (nullable). Quando informado, deve ser `> 0`. Validação Pydantic + checagem no endpoint.
+- Apenas visual. **Não bloqueia lançamentos**, **não altera** `invoice.total_amount` nem `transaction.amount`.
+- Subcategoria pode ter limite próprio. Não é inferido do limite da pai.
+- `PATCH` aceita sentinela: `invoice_budget_limit = 0` remove o limite; `> 0` define; ausente/`null` = não altera.
+- O valor permite o frontend renderizar a barra de progresso (`gasto / limite`) na tela da fatura.
+
+### Endpoints (`/api/categories`)
+
+- `GET /api/categories?scope=credit_card[&card_id=N]` — lista categorias do usuário, opcionalmente filtradas por cartão (mostra globais + específicas do cartão).
+- `POST /api/categories` — cria categoria/subcategoria. Valida `card_id`, `parent_id` e `invoice_budget_limit`.
+- `PATCH /api/categories/{id}` — edita campos enviados. Sentinelas explicadas acima.
+- `DELETE /api/categories/{id}` — exclui categoria + subcategorias + zera `category_id` das transactions afetadas.
+
+### Validação de `category_id` em transações pelo cartão
+
+- **`POST /api/import`**: ao importar fatura, se a transaction trouxer `category_id` cuja categoria tem `card_id` específico diferente do cartão da fatura, retorna `400 — Categoria não é aplicável a este cartão.` Categorias globais (`card_id = null`) são sempre aceitas.
+- **`PATCH /api/transactions/{id}`**: idem — `category_id` apontando para categoria de outro cartão retorna `400`.
+- Continua valendo o bloqueio de categoria em lançamentos sistêmicos (parcelas e pagamentos).
 
 ## Compras Parceladas (Classificação Sistêmica)
 
@@ -311,6 +361,91 @@ Regras:
 - Valida que `card_id` pertence ao usuário autenticado (`_get_user_card`). Caso contrário, `404`.
 - Categorias sistêmicas não aparecem em `top_categories` porque parcelas e pagamentos têm `category_id = null`.
 - Se não houver faturas, retorna estrutura com `invoice_count = 0`, `latest_invoice = null`, `highest_invoice = null`, `monthly_average = 0`, `future_installments_total = 0`, listas vazias.
+
+## Release Notes / Notas de Atualização
+
+Models: `app/models/release_note.py::ReleaseNote` e `UserReleaseNoteView`.
+
+### `ReleaseNote`
+
+| Campo         | Tipo          | Descrição                                                        |
+|---------------|---------------|------------------------------------------------------------------|
+| `id`          | Integer       | PK                                                               |
+| `version`     | String(40)    | **Único.** Ex: `"0.3.0"`. Mesma versão exibida na sidebar.       |
+| `title`       | String(160)   | Título amigável da release.                                      |
+| `description` | Text nullable | Descrição curta do release. Linguagem simples.                   |
+| `items_json`  | Text          | Lista de tópicos serializada como JSON string (SQLite-friendly). |
+| `show_modal`  | Boolean       | Default `True`. Quando `False`, não aparece em `pending`.        |
+| `released_at` | DateTime      | Data de release (opcional).                                      |
+| `created_at`  | DateTime      |                                                                  |
+| `updated_at`  | DateTime      |                                                                  |
+
+`items_json` é desserializado em `items: list[str]` no schema `ReleaseNoteOut`. Se o JSON for inválido, o endpoint retorna lista vazia em vez de erro.
+
+### `UserReleaseNoteView`
+
+Registro de visualização. Garante exibição única do modal por usuário/versão.
+
+| Campo             | Tipo                            | Descrição                                  |
+|-------------------|---------------------------------|--------------------------------------------|
+| `id`              | Integer                         | PK                                         |
+| `user_id`         | FK `users.id` (CASCADE)         | Quem visualizou                            |
+| `release_note_id` | FK `release_notes.id` (CASCADE) | Qual release foi visualizada               |
+| `version`         | String(40)                      | Snapshot da versão (denormalizado)         |
+| `seen_at`         | DateTime                        | Momento da visualização                    |
+
+**Constraint única:** `uq_user_release_view (user_id, release_note_id)` — impede duplicidade.
+
+### Endpoints
+
+- `GET /api/release-notes/pending`
+  - Retorna a release note mais recente com `show_modal=True` que o usuário ainda **não** visualizou.
+  - Ordem: `released_at desc nullslast`, depois `created_at desc`, depois `id desc`.
+  - Quando não há nenhuma pendente, retorna **`204 No Content`**.
+  - Requer autenticação.
+
+- `POST /api/release-notes/{release_note_id}/mark-seen`
+  - Cria `UserReleaseNoteView` se ainda não existir; **idempotente**.
+  - `404` quando a release note não existe.
+  - Retorna `{ "success": true, "seen": true }`.
+  - Requer autenticação.
+
+### Regra de exibição única
+
+- Só são pendentes release notes com `show_modal=True`.
+- Após `mark-seen`, o usuário não recebe mais aquela versão como pendente.
+- Quando uma versão nova é cadastrada (`show_modal=True`), volta a aparecer como pendente para usuários que ainda não a visualizaram.
+- `show_modal=False` nunca dispara modal — usado para ajustes internos / correções pequenas que não devem ser comunicadas ao usuário.
+
+### Cadastro de release notes (seed)
+
+A fonte oficial é a lista `RELEASE_NOTES` em `app/services/release_notes_seed.py`. A função `seed_release_notes()` é chamada no startup do FastAPI (`@app.on_event("startup")` em `app/main.py`):
+
+- **Idempotente**: só insere versões cuja `version` ainda não existe no banco.
+- Atualiza campos de texto (`title`, `description`, `items_json`, `show_modal`, `released_at`) quando a versão já existe — útil para corrigir typos sem migration.
+- Não há tela administrativa — para adicionar uma nota, edite `RELEASE_NOTES` (mais nova primeiro) e faça redeploy.
+
+### Como adicionar release notes em prompts/features futuros
+
+Sempre que um prompt entregar mudanças relevantes para o usuário final:
+
+1. Adicione um dicionário no topo de `RELEASE_NOTES` com `version` nova (alinhada ao `frontend/package.json`).
+2. Use linguagem simples — **não** mencione `schema`, `migration`, `endpoint`, `refactor`, `card_id`, `parent_id`, `backend`, `frontend` ou outros termos técnicos.
+3. Cada item deve ser uma frase curta e útil para o usuário.
+4. `show_modal=True` é o padrão. Use `False` apenas quando a versão for ajuste interno/correção pequena.
+5. Atualize `frontend/package.json#version` para a mesma versão.
+6. Opcional: defina `released_at` ISO para manter ordenação coerente entre versões.
+
+Sugestão de bloco para usar nos próximos prompts:
+
+```
+RELEASE NOTES:
+  - Atualizar ou criar release note da versão atual.
+  - Usar linguagem simples.
+  - Listar apenas mudanças úteis para o usuário final.
+  - Evitar detalhes técnicos.
+  - Definir show_modal = true, salvo quando explicitamente solicitado o contrário.
+```
 
 ## Importação de Fatura por Cartão
 
@@ -466,6 +601,8 @@ Todo parser deve:
 - Migration `b8a741a98760` cria `credit_cards`, `categories` e adiciona `card_id`, `reference_month`, `category_id` em `transactions`.
 - Migration `e5f6a7b8c9d0` cria `invoices`, adiciona `invoice_id` em `transactions` e migra dados antigos.
 - Migration `a1b2c3d4e5f6` adiciona coluna `icon` (nullable String(50)) na tabela `categories`.
+- Migration `c1d2e3f4a5b6` adiciona em `categories`: `card_id` (FK `credit_cards`, nullable, ON DELETE SET NULL), `parent_id` (self-FK, nullable, ON DELETE CASCADE) e `invoice_budget_limit` (Float, nullable). Índices em `card_id` e `parent_id`.
+- Migration `d2e3f4a5b6c7` cria `release_notes` (notas de atualização por versão) e `user_release_note_views` (registro de visualização por usuário, com unique `user_id + release_note_id`).
 
 ## Cuidados de Segurança
 

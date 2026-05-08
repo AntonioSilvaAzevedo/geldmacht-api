@@ -728,3 +728,218 @@ class TestCardDashboard:
         # User B tenta acessar o cartão de User A
         res = client.get(f"/api/cards/{card_id}/dashboard", headers=_auth(user_b.email))
         assert res.status_code == 404
+
+
+# ═════════════════════════════════════════════════════════════════════════════
+# TESTES DE EVOLUÇÃO DE CATEGORIAS — card_id, parent_id, invoice_budget_limit
+# ═════════════════════════════════════════════════════════════════════════════
+
+class TestCategoryEvolution:
+    """Cobre card_id (Feature 2), invoice_budget_limit (Feature 3), parent_id (Feature 4)."""
+
+    def _create_card(self, client, headers, name="Nubank Platinum"):
+        res = client.post("/api/cards", json={
+            "name": name, "institution": "Nubank", "closing_day": 4, "due_day": 13,
+        }, headers=headers)
+        assert res.status_code == 200, res.text
+        return res.json()["id"]
+
+    # ── Feature 2: card_id ───────────────────────────────────────────────────
+
+    def test_create_global_category_card_id_null(self, client, db):
+        """Categoria sem card_id é global (todos os cartões)."""
+        user = create_user(db, "u@test.com", "x", "U")
+        res = client.post("/api/categories", json={
+            "name": "Alimentação", "scope": "credit_card",
+        }, headers=_auth(user.email))
+        assert res.status_code == 200
+        assert res.json()["card_id"] is None
+
+    def test_create_category_with_specific_card(self, client, db):
+        """Categoria pode ser criada para um cartão específico."""
+        user = create_user(db, "u@test.com", "x", "U")
+        headers = _auth(user.email)
+        cid = self._create_card(client, headers)
+        res = client.post("/api/categories", json={
+            "name": "Reembolso", "scope": "credit_card", "card_id": cid,
+        }, headers=headers)
+        assert res.status_code == 200
+        assert res.json()["card_id"] == cid
+
+    def test_reject_card_of_another_user(self, client, db):
+        """Não pode vincular categoria a cartão de outro usuário."""
+        user_a = create_user(db, "a@test.com", "x", "A")
+        user_b = create_user(db, "b@test.com", "x", "B")
+        cid_a = self._create_card(client, _auth(user_a.email))
+        res = client.post("/api/categories", json={
+            "name": "Hack", "scope": "credit_card", "card_id": cid_a,
+        }, headers=_auth(user_b.email))
+        assert res.status_code == 404
+
+    def test_list_filtered_by_card_returns_global_and_card_specific(self, client, db):
+        """GET /categories?card_id=N retorna globais + específicas do cartão."""
+        user = create_user(db, "u@test.com", "x", "U")
+        headers = _auth(user.email)
+        c_a = self._create_card(client, headers, "Cartão A")
+        c_b = self._create_card(client, headers, "Cartão B")
+        # Global, exclusiva A, exclusiva B
+        client.post("/api/categories", json={"name": "Global", "scope": "credit_card"}, headers=headers)
+        client.post("/api/categories", json={"name": "OnlyA", "scope": "credit_card", "card_id": c_a}, headers=headers)
+        client.post("/api/categories", json={"name": "OnlyB", "scope": "credit_card", "card_id": c_b}, headers=headers)
+
+        res = client.get(f"/api/categories?scope=credit_card&card_id={c_a}", headers=headers)
+        assert res.status_code == 200
+        names = sorted(c["name"] for c in res.json())
+        assert names == ["Global", "OnlyA"]
+
+    def test_update_category_card_id_clear_with_zero(self, client, db):
+        """PATCH com card_id=0 limpa o card (vira global)."""
+        user = create_user(db, "u@test.com", "x", "U")
+        headers = _auth(user.email)
+        cid = self._create_card(client, headers)
+        cat = client.post("/api/categories", json={
+            "name": "X", "scope": "credit_card", "card_id": cid,
+        }, headers=headers).json()
+        res = client.patch(f"/api/categories/{cat['id']}", json={"card_id": 0}, headers=headers)
+        assert res.status_code == 200
+        assert res.json()["card_id"] is None
+
+    # ── Feature 3: invoice_budget_limit ──────────────────────────────────────
+
+    def test_create_with_invoice_budget_limit(self, client, db):
+        user = create_user(db, "u@test.com", "x", "U")
+        res = client.post("/api/categories", json={
+            "name": "Aliment", "scope": "credit_card", "invoice_budget_limit": 1000.0,
+        }, headers=_auth(user.email))
+        assert res.status_code == 200
+        assert res.json()["invoice_budget_limit"] == 1000.0
+
+    def test_reject_zero_or_negative_budget_on_create(self, client, db):
+        user = create_user(db, "u@test.com", "x", "U")
+        res = client.post("/api/categories", json={
+            "name": "Aliment", "scope": "credit_card", "invoice_budget_limit": 0,
+        }, headers=_auth(user.email))
+        assert res.status_code == 422
+
+    def test_remove_budget_with_zero_on_update(self, client, db):
+        user = create_user(db, "u@test.com", "x", "U")
+        cat = client.post("/api/categories", json={
+            "name": "Aliment", "scope": "credit_card", "invoice_budget_limit": 500.0,
+        }, headers=_auth(user.email)).json()
+        res = client.patch(f"/api/categories/{cat['id']}",
+                           json={"invoice_budget_limit": 0}, headers=_auth(user.email))
+        assert res.status_code == 200
+        assert res.json()["invoice_budget_limit"] is None
+
+    # ── Feature 4: subcategorias ─────────────────────────────────────────────
+
+    def test_create_subcategory(self, client, db):
+        user = create_user(db, "u@test.com", "x", "U")
+        headers = _auth(user.email)
+        parent = client.post("/api/categories", json={
+            "name": "Alimentação", "scope": "credit_card",
+        }, headers=headers).json()
+        res = client.post("/api/categories", json={
+            "name": "Mercado", "scope": "credit_card", "parent_id": parent["id"],
+        }, headers=headers)
+        assert res.status_code == 200
+        assert res.json()["parent_id"] == parent["id"]
+
+    def test_reject_subcategory_of_subcategory(self, client, db):
+        user = create_user(db, "u@test.com", "x", "U")
+        headers = _auth(user.email)
+        parent = client.post("/api/categories", json={"name": "P", "scope": "credit_card"}, headers=headers).json()
+        sub = client.post("/api/categories", json={
+            "name": "S", "scope": "credit_card", "parent_id": parent["id"],
+        }, headers=headers).json()
+        res = client.post("/api/categories", json={
+            "name": "SS", "scope": "credit_card", "parent_id": sub["id"],
+        }, headers=headers)
+        assert res.status_code == 400
+        assert "subcategoria" in res.json()["detail"].lower()
+
+    def test_reject_parent_of_another_user(self, client, db):
+        user_a = create_user(db, "a@test.com", "x", "A")
+        user_b = create_user(db, "b@test.com", "x", "B")
+        parent = client.post("/api/categories", json={
+            "name": "Pa", "scope": "credit_card",
+        }, headers=_auth(user_a.email)).json()
+        res = client.post("/api/categories", json={
+            "name": "Sub", "scope": "credit_card", "parent_id": parent["id"],
+        }, headers=_auth(user_b.email))
+        assert res.status_code == 404
+
+    def test_subcategory_inherits_parent_card_id(self, client, db):
+        user = create_user(db, "u@test.com", "x", "U")
+        headers = _auth(user.email)
+        cid = self._create_card(client, headers)
+        parent = client.post("/api/categories", json={
+            "name": "P", "scope": "credit_card", "card_id": cid,
+        }, headers=headers).json()
+        sub = client.post("/api/categories", json={
+            "name": "S", "scope": "credit_card", "parent_id": parent["id"],
+        }, headers=headers).json()
+        assert sub["card_id"] == cid
+
+    def test_reject_subcategory_card_diff_from_parent(self, client, db):
+        user = create_user(db, "u@test.com", "x", "U")
+        headers = _auth(user.email)
+        c_a = self._create_card(client, headers, "A")
+        c_b = self._create_card(client, headers, "B")
+        parent = client.post("/api/categories", json={
+            "name": "P", "scope": "credit_card", "card_id": c_a,
+        }, headers=headers).json()
+        res = client.post("/api/categories", json={
+            "name": "S", "scope": "credit_card", "parent_id": parent["id"], "card_id": c_b,
+        }, headers=headers)
+        assert res.status_code == 400
+
+    # ── Feature 5: validação de category_id por card na importação/PATCH ─────
+
+    def test_import_rejects_category_of_other_card(self, client, db):
+        user = create_user(db, "u@test.com", "x", "U")
+        headers = _auth(user.email)
+        c_a = self._create_card(client, headers, "A")
+        c_b = self._create_card(client, headers, "B")
+        cat_b = client.post("/api/categories", json={
+            "name": "OnlyB", "scope": "credit_card", "card_id": c_b,
+        }, headers=headers).json()
+        # Tenta importar fatura no cartão A com categoria do cartão B
+        payload = _card_tx_fixture(c_a, "2026-04")
+        payload["transactions"][0]["category_id"] = cat_b["id"]
+        res = client.post("/api/import", json=payload, headers=headers)
+        assert res.status_code == 400
+        assert "cartão" in res.json()["detail"].lower()
+
+    def test_patch_transaction_rejects_category_of_other_card(self, client, db):
+        user = create_user(db, "u@test.com", "x", "U")
+        headers = _auth(user.email)
+        c_a = self._create_card(client, headers, "A")
+        c_b = self._create_card(client, headers, "B")
+        # Importa transaction comum no cartão A
+        res = client.post("/api/import", json=_card_tx_fixture(c_a, "2026-04"), headers=headers)
+        assert res.status_code == 200
+        tx_id = client.get(
+            f"/api/transactions/invoice?invoice_id={res.json()['invoice_id']}",
+            headers=headers,
+        ).json()["transactions"][0]["id"]
+        # Cria categoria exclusiva do cartão B
+        cat_b = client.post("/api/categories", json={
+            "name": "OnlyB", "scope": "credit_card", "card_id": c_b,
+        }, headers=headers).json()
+        # PATCH na transaction do cartão A tentando usar categoria do B
+        res = client.patch(f"/api/transactions/{tx_id}",
+                           json={"category_id": cat_b["id"]}, headers=headers)
+        assert res.status_code == 400
+
+    def test_import_accepts_global_category(self, client, db):
+        user = create_user(db, "u@test.com", "x", "U")
+        headers = _auth(user.email)
+        cid = self._create_card(client, headers)
+        cat = client.post("/api/categories", json={
+            "name": "Aliment", "scope": "credit_card",
+        }, headers=headers).json()
+        payload = _card_tx_fixture(cid, "2026-04")
+        payload["transactions"][0]["category_id"] = cat["id"]
+        res = client.post("/api/import", json=payload, headers=headers)
+        assert res.status_code == 200

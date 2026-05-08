@@ -78,6 +78,12 @@ def update_transaction(
             ).first()
             if not category:
                 raise HTTPException(status_code=404, detail="Categoria não encontrada.")
+            # Categoria deve ser global (card_id=null) ou pertencer ao mesmo cartão da transação.
+            if category.card_id is not None and tx.card_id is not None and category.card_id != tx.card_id:
+                raise HTTPException(
+                    status_code=400,
+                    detail="Categoria não é aplicável a este cartão.",
+                )
             tx.category_id = category.id
             tx.category = category.name
     db.commit()
