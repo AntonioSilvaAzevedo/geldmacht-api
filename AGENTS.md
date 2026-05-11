@@ -356,6 +356,19 @@ Aceita `category_id` para alterar a categoria de uma transaction já importada. 
 - `category_id` deve pertencer ao `user_id` autenticado e ter `scope = credit_card`.
 - `installment_current`, `installment_total`, `card_id`, `invoice_id` **nunca** são alterados por este endpoint.
 
+### Diagnóstico de categoria no detalhe da fatura
+
+`GET /api/cards/{card_id}/invoices/{invoice_id}` deve resolver os metadados atuais de `Category` a partir de `Transaction.category_id`; não depende de reimportação do PDF. Faturas antigas passam a refletir nome, ícone, hierarquia e `invoice_budget_limit` atuais sempre que a transaction já tiver `category_id`.
+
+O endpoint registra contagens não sensíveis em log para diagnosticar produção:
+
+- `user_id`, `card_id`, `invoice_id`
+- total de transactions da fatura
+- quantas têm `category_id`
+- quantas têm `category_id` mas não carregaram `category_ref`
+
+Não loga descrição de lançamento, valores financeiros, token ou dados pessoais.
+
 ## Bloqueio de Categoria em Lançamentos Sistêmicos
 
 Lançamentos sistêmicos não recebem `category_id` manual. São considerados sistêmicos:

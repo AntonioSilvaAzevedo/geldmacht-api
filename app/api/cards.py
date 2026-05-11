@@ -1,3 +1,5 @@
+import logging
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, func
 from sqlalchemy.orm import Session, joinedload
@@ -21,6 +23,7 @@ from ..services.summary_service import calculate_invoice_summary
 from ..services.transaction_serialization import serialize_transaction_out
 
 router = APIRouter()
+logger = logging.getLogger(__name__)
 
 _MONTH_LABELS = {
     "01": "Janeiro", "02": "Fevereiro", "03": "Março", "04": "Abril",
@@ -237,6 +240,30 @@ def get_invoice_detail(
         .order_by(Transaction.date.desc())
         .all()
     )
+
+    with_category_id = sum(1 for tx in transactions_rows if tx.category_id is not None)
+    missing_category_ref = sum(
+        1
+        for tx in transactions_rows
+        if tx.category_id is not None and tx.category_ref is None
+    )
+    logger.info(
+        "Invoice detail categories: user_id=%s card_id=%s invoice_id=%s tx_count=%s tx_with_category_id=%s tx_missing_category_ref=%s",
+        current_user.id,
+        card_id,
+        invoice_id,
+        len(transactions_rows),
+        with_category_id,
+        missing_category_ref,
+    )
+    if missing_category_ref:
+        logger.warning(
+            "Invoice detail has transactions with category_id but no Category row: user_id=%s card_id=%s invoice_id=%s missing=%s",
+            current_user.id,
+            card_id,
+            invoice_id,
+            missing_category_ref,
+        )
 
     transactions_out = [serialize_transaction_out(tx) for tx in transactions_rows]
     summary = calculate_invoice_summary([tx.model_dump() for tx in transactions_out])
