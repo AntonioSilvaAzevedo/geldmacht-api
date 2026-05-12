@@ -121,6 +121,12 @@ def create_category(
     card_id = body.card_id if (body.card_id and body.card_id > 0) else None
     parent_id = body.parent_id if (body.parent_id and body.parent_id > 0) else None
 
+    if body.scope == "bank" and card_id is not None:
+        raise HTTPException(
+            status_code=400,
+            detail="Categorias de conta bancária não utilizam cartão (card_id deve ser vazio).",
+        )
+
     _validate_card_for_user(db, current_user.id, card_id)
     parent = _validate_parent_for_user(db, current_user.id, parent_id, body.scope, card_id)
 

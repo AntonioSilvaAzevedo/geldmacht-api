@@ -31,11 +31,30 @@ class Transaction(Base):
     # invoice_id é a âncora principal para transações de fatura (substituindo reference_month)
     invoice_id = Column(Integer, ForeignKey("invoices.id", ondelete="SET NULL"), nullable=True, index=True)
 
-    user         = relationship("User",       back_populates="transactions")
-    account      = relationship("Account",    back_populates="transactions")
-    card         = relationship("CreditCard", back_populates="transactions")
-    category_ref = relationship("Category",   back_populates="transactions")
-    invoice      = relationship("Invoice",    back_populates="transactions")
+    # Conta bancária cadastrada ( âncora para extratos futuros / lançamentos manuais na conta)
+    bank_account_id = Column(Integer, ForeignKey("bank_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Origem do lançamento: pdf_invoice_import | bank_statement_import | manual
+    source = Column(String(32), nullable=True)
+    # Tipo econômico (complementar ao amount assinado): income | expense | transfer | payment | adjustment
+    transaction_type = Column(String(32), nullable=True)
+    notes = Column(String(500), nullable=True)
+
+    # Referência externa (ex.: FITID do OFX) — dedupe básico na importação de extrato
+    source_reference = Column(String(255), nullable=True, index=True)
+    import_batch_id = Column(
+        Integer, ForeignKey("import_batches.id", ondelete="RESTRICT"), nullable=True, index=True
+    )
+    # SHA256 hex — mesmo user/conta/fonte quando sem FITID
+    transaction_fingerprint = Column(String(64), nullable=True, index=True)
+
+    user           = relationship("User",           back_populates="transactions")
+    account        = relationship("Account",        back_populates="transactions")
+    card           = relationship("CreditCard",     back_populates="transactions")
+    category_ref   = relationship("Category",     back_populates="transactions")
+    invoice        = relationship("Invoice",        back_populates="transactions")
+    bank_account   = relationship("BankAccount",    back_populates="transactions")
+    import_batch   = relationship("ImportBatch",    back_populates="transactions")
 
     def __repr__(self) -> str:
         sign = "+" if self.amount >= 0 else ""

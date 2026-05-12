@@ -1,8 +1,15 @@
 from datetime import date, datetime
-from pydantic import BaseModel
+from typing import Any, Literal
 
+from pydantic import BaseModel, Field, field_validator, model_validator
+
+from .import_batch import ExistingImportBatchInfo
 from .summary import InvoiceSummary
 from .invoice import InvoiceMetadata, InvoiceCreate
+
+TRANSACTION_SOURCES = frozenset({"pdf_invoice_import", "bank_statement_import", "manual"})
+TRANSACTION_TYPES = frozenset({"income", "expense", "transfer", "payment", "adjustment"})
+IMPORT_KINDS = frozenset({"credit_card_invoice", "bank_statement"})
 
 
 class TransactionBase(BaseModel):
@@ -31,6 +38,12 @@ class TransactionOut(TransactionBase):
     account_type: str | None = None   # 'nubank_pf', 'nubank_cartao', etc.
     card_id: int | None = None
     invoice_id: int | None = None     # âncora principal da fatura
+    bank_account_id: int | None = None
+    source: str | None = None
+    transaction_type: str | None = None
+    notes: str | None = None
+    source_reference: str | None = None  # FITID / ref. externa (extrato OFX)
+    import_batch_id: int | None = None
     category_id: int | None = None
     category_name: str | None = None
     # Enriquecimento a partir de Category (+ parent), preenchido pelo serializer
@@ -52,6 +65,18 @@ class InvoiceTransactionsResponse(BaseModel):
     summary: InvoiceSummary
 
 
+class StatementMetadata(BaseModel):
+    """Metadados do extrato bancário (preview OFX — campos opcionais)."""
+
+    institution: str | None = None
+    account_id: str | None = None
+    period_start: date | None = None
+    period_end: date | None = None
+    ledger_balance: float | None = None
+    total_inflows: float | None = None
+    total_outflows: float | None = None
+
+
 # ─── Schema retornado pelo endpoint de upload (preview, sem salvar) ────────────
 class ParsedTransaction(BaseModel):
     """Transação parseada — retornada como preview antes de salvar no banco."""
@@ -59,7 +84,7 @@ class ParsedTransaction(BaseModel):
     description: str
     raw_description: str | None = None
     amount: float
-    account: str                      # 'nubank_pf', 'nubank_pj', etc.
+    account: str                      # 'nubank_pf', 'nubank_pj', 'bank_statement_ofx', etc.
     category: str | None = None
     category_id: int | None = None
     category_group: str | None = None
@@ -67,16 +92,26 @@ class ParsedTransaction(BaseModel):
     is_payment: bool = False
     installment_current: int | None = None
     installment_total: int | None = None
+    transaction_type: str | None = None  # income | expense (preview extrato OFX)
+    source_reference: str | None = None  # FITID quando disponível
+    metadata: dict[str, Any] | None = None  # ex.: { "ofx_type", "fitid" }
 
 
 class UploadResponse(BaseModel):
     parser_used: str
     source_file: str
     total_transactions: int
-    transactions: list[ParsedTransaction]
+    transactions: list[ParsedTransaction] = Field(default_factory=list)
     detected_reference_month: str | None = None   # legado — derivado de invoice_metadata.due_month
     invoice_metadata: InvoiceMetadata | None = None
     summary: InvoiceSummary | None = None
+    import_kind: Literal["credit_card_invoice", "bank_statement"] | None = None
+    statement_metadata: StatementMetadata | None = None
+    file_hash: str | None = None
+    """SHA256 (hex 64 chars) do conteúdo do arquivo — sempre no ramo extrato quando processado."""
+
+    already_imported: bool = False
+    existing_import_batch: ExistingImportBatchInfo | None = None
 
 
 # ─── Schema para confirmação de importação (Etapa 2.3) ────────────────────────
@@ -110,7 +145,42 @@ class ImportRequest(BaseModel):
     reference_month: str | None = None   # legado — usar invoice.due_month quando disponível
     invoice: InvoiceCreate | None = None  # metadados reais da fatura
     transactions: list[ParsedTransaction]
+    # Fase 1 — preparação para extrato real (Fase 2). None = comportamento legado inferido pelo parser/card.
+    import_kind: Literal["credit_card_invoice", "bank_statement"] | None = None
+    bank_account_id: int | None = Field(
+        default=None,
+        description="Obrigatório quando import_kind=bank_statement — conta bancária ativa do usuário.",
+    )
+    file_hash: str | None = Field(
+        default=None,
+        description=(
+            "Obrigatório quando import_kind=bank_statement — SHA256(hex) igual ao preview. "
+            "Impede replay e duplica arquivo já importado (409)."
+        ),
+    )
+    period_start: date | None = Field(default=None, description="Início do extrato (opcional, metadados OFX).")
+    period_end: date | None = Field(default=None, description="Fim do extrato (opcional, metadados OFX).")
 
+
+
+class ManualTransactionCreate(BaseModel):
+    """Criação de lançamento manual em conta bancária (Fase 1)."""
+
+    transaction_type: Literal["income", "expense"]
+    amount: float
+    transaction_date: date
+    description: str = Field(..., min_length=1, max_length=500)
+    bank_account_id: int
+    category_id: int | None = None
+    notes: str | None = Field(None, max_length=500)
+
+    @model_validator(mode="after")
+    def validate_amount_matches_type(self) -> "ManualTransactionCreate":
+        if self.transaction_type == "income" and self.amount <= 0:
+            raise ValueError("Entrada deve ter valor positivo.")
+        if self.transaction_type == "expense" and self.amount >= 0:
+            raise ValueError("Saída deve ter valor negativo.")
+        return self
 
 class ImportResponse(BaseModel):
     """Resultado da importação: quantas foram salvas e quantas foram ignoradas."""
@@ -121,6 +191,9 @@ class ImportResponse(BaseModel):
     due_month: str | None = None     # mês de pagamento da fatura
     reference_month: str | None = None   # legado — igual a due_month
     summary: InvoiceSummary | None = None
+    bank_account_id: int | None = None
+    transactions: list[TransactionOut] | None = None  # apenas import_kind=bank_statement
+    import_batch_id: int | None = None
 
 
 class TransactionUpdate(BaseModel):

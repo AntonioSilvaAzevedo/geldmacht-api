@@ -14,7 +14,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from .config import settings
-from .api import cards, categories, dashboard, import_transactions, onboarding, release_notes, transactions, upload
+from .api import bank_accounts, cards, categories, dashboard, import_transactions, onboarding, release_notes, transactions, upload
 from .api.auth import router as auth_router
 from .services.release_notes_seed import seed_release_notes
 
@@ -45,6 +45,7 @@ app.add_middleware(
 # ── Routers ──────────────────────────────────────────────────────────────────
 app.include_router(auth_router)
 app.include_router(upload.router, prefix="/api", tags=["Upload"])
+app.include_router(bank_accounts.router, prefix="/api", tags=["Contas bancárias"])
 app.include_router(import_transactions.router, prefix="/api", tags=["Import"])
 app.include_router(transactions.router, prefix="/api", tags=["Transações"])
 app.include_router(cards.router, prefix="/api", tags=["Cartões"])

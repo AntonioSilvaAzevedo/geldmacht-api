@@ -84,10 +84,17 @@ alembic revision -m "descricao_da_migracao"
 
 - `GET /`: health básico com nome, versão e docs.
 - `GET /health`: status simples.
-- `POST /api/upload`: recebe extrato PDF/Excel, detecta parser e retorna preview. Não persiste no banco. Quando o parser for `faturacartaonubank`, inclui `summary`.
-- `POST /api/import`: recebe transações selecionadas, cria ou resolve `Account`, remove duplicatas e persiste novas transações. Quando a importação vier de `faturacartaonubank`, inclui `summary` calculado apenas sobre as transações realmente importadas.
-- `GET /api/transactions`: lista transações persistidas, com filtros por mês, categoria e conta.
-- `GET /api/transactions/invoice?invoice_id={id}`: **preferencial** — lista transações de uma fatura pelo `invoice_id`, retornando `transactions` e `summary`.
+- `POST /api/upload`: recebe extrato PDF/Excel **ou OFX de extrato** quando `import_kind=bank_statement` (`multipart/form-data`: `file`, `import_kind`, e para extrato OFX **`bank_account_id` obrigatório**). Calcula **`file_hash`** (SHA256 hex) do conteúdo. Se já existir **`ImportBatch`** concluído (`imported` ou `partially_imported`) para o mesmo utilizador, conta e hash, responde com **`already_imported=true`** e **`existing_import_batch`** (sem preview útil de novo ficheiro). Caso contrário devolve preview + `file_hash` + `statement_metadata` quando aplicável. Não persiste transações. **`import_kind=credit_card_invoice`** pode ser enviado junto à fatura. Resposta pode incluir `invoice_metadata`/`summary` (fatura Nubank).
+
+- `POST /api/import`: persiste transações escolhidas no preview. **Extrato (`import_kind=bank_statement`)** — exige `bank_account_id`, **`file_hash`** (hex 64, igual ao preview), `parser_used=bank_statement_ofx`, linhas `account=bank_statement_ofx`; opcional `period_start`/`period_end` (YYYY-MM-DD) para gravar no lote; categoria só `scope=bank`; `source=bank_statement_import`. Cria **`ImportBatch`** por operação; cada transação nova recebe `import_batch_id`. **409** se tentar importar o mesmo `file_hash` já importado para essa conta. **Dedupe**: (1) `source_reference`/FITID quando preenchido — `(user_id, bank_account_id, source, source_reference)`; (2) senão **`transaction_fingerprint`** determinístico (`app/services/bank_statement_import.py`). Resposta inclui `imported`, `skipped`, `import_batch_id`, `transactions` serializadas quando houver criações.
+
+- `GET /api/bank-accounts` / `POST` / `PATCH` / `DELETE`: CRUD de contas bancárias do usuário (soft delete).
+
+- `GET /api/bank-accounts/{id}/import-batches`: histórico de **`ImportBatch`** da conta (utilizador deve ser dono), mais recentes primeiro.
+- `POST /api/transactions`: criação de lançamento manual em `BankAccount` (`source=manual`).
+- `GET /api/transactions`: lista transações persistidas do usuário, com filtros opcionais `month` (YYYY-MM), `category`, `account` (tipo legado), **`bank_account_id`** (movimentações só dessa conta cadastrada — exclusão de `card_id`/`invoice_id`), **`transaction_type`** (`income`|`expense`), **`start_date`/`end_date`** (YYYY-MM-DD inclusivo), `skip`, `limit`.
+
+- `GET /api/transactions/invoice`: **preferencial** — lista transações de uma fatura pelo `invoice_id`, retornando `transactions` e `summary`.
 - `GET /api/transactions/invoice?card_id={id}&month=YYYY-MM`: legado — busca por `reference_month` com fallback para `billing_month` e depois `date`.
 - `GET /api/cards`: lista cartões de crédito do usuário autenticado.
 - `GET /api/cards/{card_id}`: retorna um cartão do usuário autenticado.
@@ -121,7 +128,7 @@ alembic revision -m "descricao_da_migracao"
 - `transaction.date` é a **data real da compra** e deve sempre ser preservada. Nunca deve ser usada como fonte primária para determinar a fatura.
 - `invoice_id` é a âncora principal de cada transação de fatura. Todas as transactions novas de cartão devem ter `invoice_id`.
 - `reference_month` e `billing_month` são campos legados mantidos para compatibilidade com dados antigos.
-- Importação considera duplicata por data, valor, descrição bruta e conta.
+- Importação considera duplicata por data, valor, descrição bruta e conta (fluxos PDF/Excel legados); **extratos OFX** usam **`source_reference`/FITID** e **`transaction_fingerprint`** (ver ImportBatch).
 
 ## Entidade Invoice / Fatura
 
@@ -203,6 +210,55 @@ Regras:
 - Não afeta transações ou cartões de outros usuários.
 - Retorna `{ "deleted": true }` em caso de sucesso.
 
+## Contas bancárias (`BankAccount`) — Fase 1
+
+Model: `app/models/bank_account.py::BankAccount`.
+
+Tabela `bank_accounts`: `id`, `user_id`, `name`, `institution` (nullable), `account_type` (`checking` \| `savings` \| `payment` \| `business` \| `investment` \| `other`), `currency` (default `BRL`), `is_active` (default true), timestamps.
+
+Endpoints (`/api/bank-accounts`, autenticados):
+
+- `GET /api/bank-accounts` — lista contas **ativas** por padrão. Query `include_inactive=true` inclui desativadas (tela de gestão).
+- `GET /api/bank-accounts/{id}` — detalhe; 404 se outro usuário.
+- `POST /api/bank-accounts` — cria conta.
+- `PATCH /api/bank-accounts/{id}` — atualiza campos enviados.
+- `DELETE /api/bank-accounts/{id}` — **soft delete**: apenas `is_active = false`. Transações existentes preservadas.
+- `GET /api/bank-accounts/{id}/import-batches` — lista **`ImportBatch`** (OFX / extrato) dessa conta e do utilizador; ordenação por `id` descendente.
+
+## Lotes de importação (`ImportBatch`) — Fase 2 (extrato OFX)
+
+Model: `app/models/import_batch.py::ImportBatch`. Migração `i9j0k1l2m3n4`.
+
+Cada **`POST /api/import`** com `import_kind=bank_statement` cria um registo com `file_hash`, `file_name`, `parser_used`, contadores e `status`. Transações criadas apontam **`import_batch_id`**. Não expor lotes de outros utilizadores. `ON DELETE RESTRICT` na FK das transações para o lote impede apagar o lote enquanto existirem linhas vinculadas.
+
+## Transações: conta bancária, origem e tipo — Fase 1
+
+Novos campos em `transactions` (migrations `g2h3i4j5k6l7`, `h8i9j0k1l2m3` para `source_reference`, **`i9j0k1l2m3n4`** para lote/fingerprint):
+
+- `bank_account_id` — FK `bank_accounts`, nullable, `ON DELETE SET NULL`. Âncora para lançamentos manuais na conta e extratos.
+- `source` — `pdf_invoice_import` \| `bank_statement_import` \| `manual` \| null (legado antes da Fase 1).
+- `transaction_type` — `income` \| `expense` \| `transfer` \| `payment` \| `adjustment` \| null (legado).
+- `notes` — texto opcional (lançamento manual).
+- **`source_reference`** — String(255), nullable, indexada; referência externa (ex.: FITID do OFX) — dedupe prioritária com `source=bank_statement_import` na mesma conta/utilizador.
+- **`import_batch_id`** — FK `import_batches`, nullable, `ON DELETE RESTRICT`. Preenchido nas importações de extrato confirmadas (`bank_statement`).
+- **`transaction_fingerprint`** — String(64), nullable — SHA256 de chave determinística quando não há FITID; dedupe secundária.
+
+Regras:
+
+- Importação de **fatura** preenche `source = pdf_invoice_import` e `transaction_type` derivado (`payment` se `is_payment`, senão `expense`/`income` conforme `amount`).
+- Importação de **extrato OFX** (`import_kind=bank_statement`) preenche `source = bank_statement_import`, `bank_account_id`, `import_batch_id`, `transaction_type`, `source_reference` e/ou `transaction_fingerprint` conforme helper em `bank_statement_import.py`.
+- Imports antigos permanecem com `source`/`transaction_type` nulos até reimportação.
+- `POST /api/transactions` cria lançamento **manual** apenas em conta bancária: body `ManualTransactionCreate` (`transaction_type` income/expense, `amount` positivo para entrada e negativo para saída, `transaction_date`, `description`, `bank_account_id`, `category_id` opcional com `scope=bank`, `notes`). Define `source=manual`, `card_id`/`invoice_id`/`account_id` nulos.
+- `POST /api/import` com **`import_kind=bank_statement`** exige `bank_account_id`, **`file_hash`** e `parser_used=bank_statement_ofx`; não cria `Invoice`; `category_id` apenas `scope=bank`. Se `category_id` de `credit_card` for enviado, **400**. **409** se o mesmo `file_hash` já foi importado para essa conta. Duplicatas por FITID (`source_reference`) ou por **`transaction_fingerprint`** na mesma conta/utilizador → contadas em `skipped`.
+
+- Se `import_kind=credit_card_invoice` mas o payload não é fatura de cartão, **400**.
+
+### `PATCH /api/transactions/{id}` e categorias
+
+- Transações com `bank_account_id` aceitam apenas categorias com `scope=bank`.
+- Transações com `card_id` mantêm regras `scope=credit_card`.
+- Demais (legado): categorias `credit_card` globais (`card_id` null) ou `bank` conforme validação em `app/api/transactions.py`.
+
 ## Categorias Manuais
 
 Model: `app/models/category.py::Category`.
@@ -212,7 +268,7 @@ Campos:
 - `id`
 - `user_id`
 - `name`
-- `scope` — apenas `credit_card` por enquanto. Obrigatório.
+- `scope` — `credit_card` ou `bank` (Fase 1). Obrigatório.
 - `color` — legado, mantido para compatibilidade. Não é o principal identificador visual.
 - `icon` — chave de ícone (ex: `"shopping-cart"`, `"utensils"`, `"car"`). Nullable. Migration `a1b2c3d4e5f6`.
 - `card_id` — FK para `credit_cards`, **nullable**. `null` = categoria global (todos os cartões); preenchido = exclusiva do cartão. Migration `c1d2e3f4a5b6`. `ON DELETE SET NULL`.
@@ -223,7 +279,9 @@ Campos:
 
 Regras gerais:
 
-- Neste momento só existe `scope = credit_card`.
+- `scope = credit_card` — faturas de cartão; pode usar `card_id` e `invoice_budget_limit`.
+- `scope = bank` — lançamentos manuais / futuros extratos em conta. **Não** usa `card_id`; `POST /api/categories` com `scope=bank` e `card_id` preenchido retorna **400**.
+- Importação de fatura continua validando apenas categorias `credit_card`.
 - Categorias são sempre filtradas por `user_id`.
 - Importação de fatura aceita `category_id` por transação, valida que a categoria pertence ao usuário e salva também `category` com o nome atual para compatibilidade.
 - Não existe categorização automática, regra por descrição, sugestão inteligente ou IA.
@@ -267,7 +325,7 @@ Regras gerais:
 
 ### Endpoints (`/api/categories`)
 
-- `GET /api/categories?scope=credit_card[&card_id=N]` — lista categorias do usuário, opcionalmente filtradas por cartão (mostra globais + específicas do cartão).
+- `GET /api/categories?scope=credit_card|bank[&card_id=N]` — lista categorias do usuário.
 - `POST /api/categories` — cria categoria/subcategoria. Valida `card_id`, `parent_id` e `invoice_budget_limit`.
 - `PATCH /api/categories/{id}` — edita campos enviados. Sentinelas explicadas acima.
 - `DELETE /api/categories/{id}` — exclui categoria + subcategorias + zera `category_id` das transactions afetadas.
@@ -353,7 +411,7 @@ O backend não muda — o filtro é responsabilidade do frontend, que usa o help
 Aceita `category_id` para alterar a categoria de uma transaction já importada. A resposta é `TransactionOut` com os mesmos campos enriquecidos de categoria (`category_display_label`, `category_icon`, `category_invoice_budget_limit`, etc.) usados no detalhe da fatura.
 
 - `category_id = 0` remove a categoria (seta `category_id = null` e `category = null`).
-- `category_id` deve pertencer ao `user_id` autenticado e ter `scope = credit_card`.
+- `category_id` deve pertencer ao `user_id` autenticado; `scope` deve ser compatível (`credit_card` para fatura de cartão; `bank` para lançamento em `bank_account_id`).
 - `installment_current`, `installment_total`, `card_id`, `invoice_id` **nunca** são alterados por este endpoint.
 
 ### Diagnóstico de categoria no detalhe da fatura
@@ -571,7 +629,14 @@ RELEASE NOTES:
 
 ### Upload (`POST /api/upload`)
 
-Continua apenas fazendo preview (não persiste). Para fatura Nubank, retorna:
+FormData `file` obrigatório; **`import_kind` opcional** (`credit_card_invoice` \| `bank_statement`). Quando **`import_kind=bank_statement`**:
+
+- arquivo deve ser `.ofx` ou `.qfx`;
+- uso do parser **`ofx_bank_statement`** (resposta `parser_used=bank_statement_ofx`), retorno **`statement_metadata`** (instituição, período, saldo, totais onde aplicável) + **`transactions`** com `transaction_type`, `source_reference`, `metadata` OFX opcional — **sem** criar invoice.
+
+Fluxo anterior **PDF/Excel** inalterável quando `import_kind` omitido ou `credit_card_invoice` com PDF de fatura.
+
+Para **fatura Nubank** (parser `faturacartaonubank`), retorna:
 
 - `summary`
 - `detected_reference_month` — igual a `invoice_metadata.due_month` quando extraído.
@@ -704,6 +769,12 @@ Todo parser deve:
 - Retornar dicts compatíveis com `app/schemas/transaction.py::ParsedTransaction`.
 - Evitar lançar erro em `can_parse`; em caso de arquivo inválido ou não reconhecido, retornar `False`.
 - Usar fixtures sintéticas em testes sempre que possível. Não versionar extratos reais.
+
+### Extrato OFX (`bank_statement_ofx`)
+
+- Módulo `app/parsers/ofx_bank_statement.py::parse_bank_statement_ofx` — usado quando **`POST /api/upload`** envia **`import_kind=bank_statement`**.
+- Extrai **`STMTTRN`** (`DTPOSTED`, `TRNAMT`, `FITID`, `MEMO`/`NAME`), período **`DTSTART`/`DTEND`** quando disponível, **`LEDGERBAL`**/`BALAMT`, instituição/conta quando presentes.
+- Saídas compatíveis com `ParsedTransaction` (`account='bank_statement_ofx'`, `transaction_type`, `metadata` opcional).
 
 ## Banco e Migrações
 

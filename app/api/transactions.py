@@ -1,3 +1,5 @@
+from datetime import date as date_type
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session, joinedload
 from sqlalchemy import extract
@@ -6,15 +8,150 @@ from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.user import User
 from ..models.account import Account
+from ..models.bank_account import BankAccount
 from ..models.category import Category
 from ..models.credit_card import CreditCard
 from ..models.invoice import Invoice
 from ..models.transaction import Transaction
-from ..schemas.transaction import InvoiceTransactionsResponse, TransactionOut, TransactionUpdate
+from ..schemas.transaction import (
+    InvoiceTransactionsResponse,
+    ManualTransactionCreate,
+    TransactionOut,
+    TransactionUpdate,
+)
 from ..services.summary_service import calculate_invoice_summary
 from ..services.transaction_serialization import serialize_transaction_out
 
 router = APIRouter()
+
+
+def _apply_category_patch(
+    db: Session,
+    current_user: User,
+    tx: Transaction,
+    category_id: int | None,
+) -> None:
+    """Atualiza category_id em tx; levanta HTTPException se inválido."""
+    if category_id is None:
+        return
+    if category_id == 0:
+        tx.category_id = None
+        tx.category = None
+        return
+
+    category = db.query(Category).filter(
+        Category.id == category_id,
+        Category.user_id == current_user.id,
+    ).first()
+    if not category:
+        raise HTTPException(status_code=404, detail="Categoria não encontrada.")
+
+    if tx.bank_account_id is not None:
+        if category.scope != "bank":
+            raise HTTPException(
+                status_code=400,
+                detail="Use uma categoria com escopo conta bancária (bank).",
+            )
+    elif tx.card_id is not None:
+        if category.scope != "credit_card":
+            raise HTTPException(
+                status_code=400,
+                detail="Categoria incompatível com lançamento de cartão.",
+            )
+        if category.card_id is not None and tx.card_id is not None and category.card_id != tx.card_id:
+            raise HTTPException(
+                status_code=400,
+                detail="Categoria não é aplicável a este cartão.",
+            )
+    else:
+        if category.scope not in ("credit_card", "bank"):
+            raise HTTPException(status_code=400, detail="Categoria incompatível com este lançamento.")
+        if category.scope == "credit_card" and category.card_id is not None:
+            raise HTTPException(
+                status_code=400,
+                detail="Para lançamentos sem cartão, use categoria global ou escopo conta bancária.",
+            )
+
+    tx.category_id = category.id
+    tx.category = category.name
+
+
+@router.post(
+    "/transactions",
+    response_model=TransactionOut,
+    summary="Criar lançamento manual (conta bancária)",
+    description=(
+        "Cria transação com source=manual, vinculada a uma BankAccount do usuário. "
+        "Transferências entre contas ficam para fase futura."
+    ),
+)
+def create_manual_transaction(
+    body: ManualTransactionCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TransactionOut:
+    bacc = (
+        db.query(BankAccount)
+        .filter(
+            BankAccount.id == body.bank_account_id,
+            BankAccount.user_id == current_user.id,
+        )
+        .first()
+    )
+    if not bacc:
+        raise HTTPException(status_code=404, detail="Conta bancária não encontrada.")
+    if not bacc.is_active:
+        raise HTTPException(status_code=400, detail="Conta bancária está desativada.")
+
+    category = None
+    if body.category_id is not None:
+        category = db.query(Category).filter(
+            Category.id == body.category_id,
+            Category.user_id == current_user.id,
+            Category.scope == "bank",
+        ).first()
+        if not category:
+            raise HTTPException(status_code=404, detail="Categoria não encontrada ou incompatível.")
+
+    tx = Transaction(
+        user_id=current_user.id,
+        date=body.transaction_date,
+        description=body.description.strip(),
+        raw_description=body.description.strip(),
+        amount=body.amount,
+        account_id=None,
+        card_id=None,
+        invoice_id=None,
+        bank_account_id=bacc.id,
+        category_id=category.id if category else None,
+        category=category.name if category else None,
+        category_group=None,
+        source="manual",
+        transaction_type=body.transaction_type,
+        notes=body.notes.strip() if body.notes else None,
+        source_file=None,
+        is_internal_transfer=False,
+        is_payment=False,
+        installment_current=None,
+        installment_total=None,
+        reference_month=None,
+        billing_month=None,
+    )
+    db.add(tx)
+    db.commit()
+    db.refresh(tx)
+    loaded = (
+        db.query(Transaction)
+        .options(
+            joinedload(Transaction.account),
+            joinedload(Transaction.bank_account),
+            joinedload(Transaction.category_ref).joinedload(Category.parent),
+        )
+        .filter(Transaction.id == tx.id, Transaction.user_id == current_user.id)
+        .first()
+    )
+    assert loaded is not None
+    return serialize_transaction_out(loaded)
 
 
 @router.patch(
@@ -33,6 +170,7 @@ def update_transaction(
         db.query(Transaction)
         .options(
             joinedload(Transaction.account),
+            joinedload(Transaction.bank_account),
             joinedload(Transaction.category_ref).joinedload(Category.parent),
         )
         .filter(
@@ -63,30 +201,13 @@ def update_transaction(
                 status_code=400,
                 detail="Este lançamento é sistêmico e não pode ser categorizado manualmente.",
             )
-        if body.category_id == 0:
-            tx.category_id = None
-            tx.category = None
-        else:
-            category = db.query(Category).filter(
-                Category.id == body.category_id,
-                Category.user_id == current_user.id,
-                Category.scope == "credit_card",
-            ).first()
-            if not category:
-                raise HTTPException(status_code=404, detail="Categoria não encontrada.")
-            # Categoria deve ser global (card_id=null) ou pertencer ao mesmo cartão da transação.
-            if category.card_id is not None and tx.card_id is not None and category.card_id != tx.card_id:
-                raise HTTPException(
-                    status_code=400,
-                    detail="Categoria não é aplicável a este cartão.",
-                )
-            tx.category_id = category.id
-            tx.category = category.name
+        _apply_category_patch(db, current_user, tx, body.category_id)
     db.commit()
     tx_out = (
         db.query(Transaction)
         .options(
             joinedload(Transaction.account),
+            joinedload(Transaction.bank_account),
             joinedload(Transaction.category_ref).joinedload(Category.parent),
         )
         .filter(
@@ -119,6 +240,7 @@ def get_invoice_transactions(
 ) -> InvoiceTransactionsResponse:
     base = db.query(Transaction).options(
         joinedload(Transaction.account),
+        joinedload(Transaction.bank_account),
         joinedload(Transaction.category_ref).joinedload(Category.parent),
     ).filter(Transaction.user_id == current_user.id)
 
@@ -183,10 +305,17 @@ def get_invoice_transactions(
 )
 def list_transactions(
     current_user: User = Depends(get_current_user),
-    month:    str | None = Query(None, description="Mês no formato YYYY-MM, ex: 2026-01"),
+    month: str | None = Query(None, description="Mês no formato YYYY-MM, ex: 2026-01"),
     category: str | None = Query(None, description="Categoria exata, ex: Alimentação"),
-    account:  str | None = Query(None, description="Conta, ex: nubank_pf"),
-    skip:  int = Query(0,   ge=0),
+    account: str | None = Query(None, description="Conta, ex: nubank_pf"),
+    bank_account_id: int | None = Query(None, description="Filtra por conta bancária cadastrada"),
+    transaction_type: str | None = Query(
+        None,
+        description="Tipo econômico: income ou expense",
+    ),
+    start_date: str | None = Query(None, description="YYYY-MM-DD — data inicial (inclusive)"),
+    end_date: str | None = Query(None, description="YYYY-MM-DD — data final (inclusive)"),
+    skip: int = Query(0, ge=0),
     limit: int = Query(200, ge=1, le=1000),
     db: Session = Depends(get_db),
 ) -> list[TransactionOut]:
@@ -194,10 +323,44 @@ def list_transactions(
         db.query(Transaction)
         .options(
             joinedload(Transaction.account),
+            joinedload(Transaction.bank_account),
             joinedload(Transaction.category_ref).joinedload(Category.parent),
         )
         .filter(Transaction.user_id == current_user.id)
     )
+
+    if bank_account_id is not None:
+        bacc = db.query(BankAccount).filter(
+            BankAccount.id == bank_account_id,
+            BankAccount.user_id == current_user.id,
+        ).first()
+        if not bacc:
+            raise HTTPException(status_code=404, detail="Conta bancária não encontrada.")
+        query = query.filter(
+            Transaction.bank_account_id == bank_account_id,
+            Transaction.card_id.is_(None),
+            Transaction.invoice_id.is_(None),
+        )
+
+    if transaction_type:
+        tt = transaction_type.strip().lower()
+        if tt not in ("income", "expense"):
+            raise HTTPException(status_code=422, detail="transaction_type deve ser income ou expense.")
+        query = query.filter(Transaction.transaction_type == tt)
+
+    if start_date:
+        try:
+            d0 = date_type.fromisoformat(start_date.strip())
+            query = query.filter(Transaction.date >= d0)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="start_date inválido; use YYYY-MM-DD.") from None
+
+    if end_date:
+        try:
+            d1 = date_type.fromisoformat(end_date.strip())
+            query = query.filter(Transaction.date <= d1)
+        except ValueError:
+            raise HTTPException(status_code=422, detail="end_date inválido; use YYYY-MM-DD.") from None
 
     if month:
         try:
