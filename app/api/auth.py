@@ -113,6 +113,22 @@ async def google_auth(body: GoogleTokenRequest, db: Session = Depends(get_db)) -
     )
 
 
+# ── Refresh ────────────────────────────────────────────────────────────────────
+
+@router.post("/refresh", response_model=AuthResponse)
+def refresh(current_user: User = Depends(get_current_user)) -> AuthResponse:
+    """Re-emite um novo access_token para o usuário já autenticado.
+    O token atual ainda precisa ser válido — o frontend chama este
+    endpoint ~5 minutos antes de expirar para renovar silenciosamente.
+    """
+    token = create_access_token({"sub": current_user.email})
+    logger.info("Token refresh: %s", current_user.email)
+    return AuthResponse(
+        access_token=token,
+        user=UserOut(email=current_user.email, name=current_user.name),
+    )
+
+
 # ── Me ─────────────────────────────────────────────────────────────────────────
 
 @router.get("/me", response_model=UserOut)
