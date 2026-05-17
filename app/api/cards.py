@@ -1,7 +1,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
-from sqlalchemy import and_, func
+from sqlalchemy import and_, case, func, literal
 from sqlalchemy.orm import Session, joinedload
 
 from ..database import get_db
@@ -162,19 +162,31 @@ def list_card_invoices(
     _get_user_card(db, current_user.id, card_id)
 
     # Agrupa total e contagem por invoice
+    # computed_total = sum(|despesas|) - sum(créditos/estornos)  [exclui pagamentos]
+    _net_total = func.coalesce(
+        func.sum(
+            case(
+                (Transaction.amount < 0, func.abs(Transaction.amount)),
+                (
+                    and_(Transaction.amount > 0, Transaction.is_payment == False),
+                    -Transaction.amount,
+                ),
+                else_=literal(0.0),
+            )
+        ),
+        0.0,
+    )
+    _expense_count = func.sum(
+        case((Transaction.amount < 0, literal(1)), else_=literal(0))
+    )
+
     rows = (
         db.query(
             Invoice,
-            func.count(Transaction.id).label("transactions_count"),
-            func.sum(func.abs(Transaction.amount)).label("computed_total"),
+            _expense_count.label("transactions_count"),
+            _net_total.label("computed_total"),
         )
-        .outerjoin(
-            Transaction,
-            and_(
-                Transaction.invoice_id == Invoice.id,
-                Transaction.amount < 0,
-            ),
-        )
+        .outerjoin(Transaction, Transaction.invoice_id == Invoice.id)
         .filter(
             Invoice.card_id == card_id,
             Invoice.user_id == current_user.id,
@@ -195,7 +207,7 @@ def list_card_invoices(
             cycle_start_date=invoice.cycle_start_date,
             cycle_end_date=invoice.cycle_end_date,
             total_amount=invoice.total_amount,
-            computed_total=round(float(total or 0), 2),
+            computed_total=round(float(invoice.total_amount if invoice.total_amount is not None else (total or 0)), 2),
             transactions_count=int(count or 0),
             label=_label_for_due_month(invoice.due_month),
         ))
@@ -303,19 +315,27 @@ def get_card_dashboard(
 ) -> CardDashboardResponse:
     _get_user_card(db, current_user.id, card_id)
 
-    # 1. Faturas + total computado (apenas amount < 0)
+    # 1. Faturas + total computado: sum(|despesas|) - sum(créditos/estornos)
+    _dash_net_total = func.coalesce(
+        func.sum(
+            case(
+                (Transaction.amount < 0, func.abs(Transaction.amount)),
+                (
+                    and_(Transaction.amount > 0, Transaction.is_payment == False),
+                    -Transaction.amount,
+                ),
+                else_=literal(0.0),
+            )
+        ),
+        0.0,
+    )
+
     invoice_rows = (
         db.query(
             Invoice,
-            func.coalesce(func.sum(func.abs(Transaction.amount)), 0.0).label("computed_total"),
+            _dash_net_total.label("computed_total"),
         )
-        .outerjoin(
-            Transaction,
-            and_(
-                Transaction.invoice_id == Invoice.id,
-                Transaction.amount < 0,
-            ),
-        )
+        .outerjoin(Transaction, Transaction.invoice_id == Invoice.id)
         .filter(
             Invoice.card_id == card_id,
             Invoice.user_id == current_user.id,
@@ -331,7 +351,7 @@ def get_card_dashboard(
             due_month=invoice.due_month,
             due_date=invoice.due_date,
             total_amount=invoice.total_amount,
-            computed_total=round(float(computed_total or 0), 2),
+            computed_total=round(float(invoice.total_amount if invoice.total_amount is not None else (computed_total or 0)), 2),
         )
 
     minis = [_to_mini(inv, total) for inv, total in invoice_rows]
