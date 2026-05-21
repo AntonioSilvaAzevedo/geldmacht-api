@@ -76,20 +76,12 @@ def _apply_category_patch(
     tx.category = category.name
 
 
-@router.post(
-    "/transactions",
-    response_model=TransactionOut,
-    summary="Criar lançamento manual (conta bancária)",
-    description=(
-        "Cria transação com source=manual, vinculada a uma BankAccount do usuário. "
-        "Transferências entre contas ficam para fase futura."
-    ),
-)
-def create_manual_transaction(
+def _build_manual_tx(
     body: ManualTransactionCreate,
-    current_user: User = Depends(get_current_user),
-    db: Session = Depends(get_db),
-) -> TransactionOut:
+    current_user: User,
+    db: Session,
+) -> Transaction:
+    """Valida e constrói um Transaction (sem commit)."""
     bacc = (
         db.query(BankAccount)
         .filter(
@@ -99,9 +91,9 @@ def create_manual_transaction(
         .first()
     )
     if not bacc:
-        raise HTTPException(status_code=404, detail="Conta bancária não encontrada.")
+        raise HTTPException(status_code=404, detail=f"Conta bancária {body.bank_account_id} não encontrada.")
     if not bacc.is_active:
-        raise HTTPException(status_code=400, detail="Conta bancária está desativada.")
+        raise HTTPException(status_code=400, detail=f"Conta bancária {bacc.id} está desativada.")
 
     category = None
     if body.category_id is not None:
@@ -113,7 +105,7 @@ def create_manual_transaction(
         if not category:
             raise HTTPException(status_code=404, detail="Categoria não encontrada ou incompatível.")
 
-    tx = Transaction(
+    return Transaction(
         user_id=current_user.id,
         date=body.transaction_date,
         description=body.description.strip(),
@@ -137,9 +129,9 @@ def create_manual_transaction(
         reference_month=None,
         billing_month=None,
     )
-    db.add(tx)
-    db.commit()
-    db.refresh(tx)
+
+
+def _load_tx_out(tx_id: int, user_id: int, db: Session) -> TransactionOut:
     loaded = (
         db.query(Transaction)
         .options(
@@ -147,11 +139,49 @@ def create_manual_transaction(
             joinedload(Transaction.bank_account),
             joinedload(Transaction.category_ref).joinedload(Category.parent),
         )
-        .filter(Transaction.id == tx.id, Transaction.user_id == current_user.id)
+        .filter(Transaction.id == tx_id, Transaction.user_id == user_id)
         .first()
     )
     assert loaded is not None
     return serialize_transaction_out(loaded)
+
+
+@router.post(
+    "/transactions",
+    response_model=TransactionOut,
+    summary="Criar lançamento manual (conta bancária)",
+)
+def create_manual_transaction(
+    body: ManualTransactionCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> TransactionOut:
+    tx = _build_manual_tx(body, current_user, db)
+    db.add(tx)
+    db.commit()
+    db.refresh(tx)
+    return _load_tx_out(tx.id, current_user.id, db)
+
+
+@router.post(
+    "/transactions/batch",
+    response_model=list[TransactionOut],
+    summary="Criar múltiplos lançamentos manuais em lote",
+)
+def create_manual_transactions_batch(
+    body: list[ManualTransactionCreate],
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[TransactionOut]:
+    if not body:
+        return []
+    txs = [_build_manual_tx(item, current_user, db) for item in body]
+    for tx in txs:
+        db.add(tx)
+    db.commit()
+    for tx in txs:
+        db.refresh(tx)
+    return [_load_tx_out(tx.id, current_user.id, db) for tx in txs]
 
 
 @router.patch(

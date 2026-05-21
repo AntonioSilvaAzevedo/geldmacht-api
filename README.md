@@ -21,11 +21,11 @@ cp .env.example .env
 # editar .env com seus valores
 
 alembic upgrade head
-uvicorn app.main:app --reload --port 8000
+uvicorn app.main:app --reload --port 8010
 ```
 
-API disponível em http://localhost:8000  
-Docs em http://localhost:8000/docs
+API disponível em http://localhost:8010  
+Docs em http://localhost:8010/docs
 
 ## Variáveis de ambiente
 

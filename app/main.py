@@ -2,11 +2,11 @@
 Geldmacht API — FastAPI entry point.
 
 Rodar localmente:
-    cd backend
+    cd geldmacht-api
     source venv/bin/activate
-    uvicorn app.main:app --reload --port 8000
+    uvicorn app.main:app --reload --port 8010
 
-Docs interativas: http://localhost:8000/docs
+Docs interativas: http://localhost:8010/docs
 """
 import logging
 
