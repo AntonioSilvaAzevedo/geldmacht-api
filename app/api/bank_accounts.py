@@ -10,6 +10,7 @@ from ..models.import_batch import ImportBatch
 from ..models.user import User
 from ..schemas.bank_account import BankAccountCreate, BankAccountOut, BankAccountUpdate
 from ..schemas.import_batch import ImportBatchOut
+from .institutions import get_owned_institution
 
 router = APIRouter()
 
@@ -78,10 +79,17 @@ def create_bank_account(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ) -> BankAccountOut:
+    institution_id = None
+    institution = body.institution.strip() if body.institution else None
+    if body.institution_id is not None:
+        inst = get_owned_institution(db, current_user.id, body.institution_id)
+        institution_id = inst.id
+        institution = inst.name
     acc = BankAccount(
         user_id=current_user.id,
         name=body.name.strip(),
-        institution=body.institution.strip() if body.institution else None,
+        institution=institution,
+        institution_id=institution_id,
         account_type=body.account_type,
         currency=body.currency or "BRL",
         is_active=body.is_active,

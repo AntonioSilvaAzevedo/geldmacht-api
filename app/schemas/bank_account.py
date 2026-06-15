@@ -10,6 +10,7 @@ VALID_BANK_ACCOUNT_TYPES = frozenset(
 class BankAccountBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     institution: str | None = Field(None, max_length=120)
+    institution_id: int | None = None
     account_type: str = Field(default="checking", max_length=32)
     currency: str = Field(default="BRL", max_length=8)
     is_active: bool = True

@@ -21,6 +21,7 @@ class User(Base):
     # Dados do usuário — cascade garante limpeza ao deletar o User
     accounts      = relationship("Account",       back_populates="user", cascade="all, delete-orphan")
     bank_accounts = relationship("BankAccount",    back_populates="user", cascade="all, delete-orphan")
+    institutions  = relationship("Institution",    back_populates="user", cascade="all, delete-orphan")
     transactions = relationship("Transaction", back_populates="user", cascade="all, delete-orphan")
     credit_cards = relationship("CreditCard",  back_populates="user", cascade="all, delete-orphan")
     categories   = relationship("Category",    back_populates="user", cascade="all, delete-orphan")

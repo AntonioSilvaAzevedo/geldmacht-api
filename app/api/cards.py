@@ -21,6 +21,7 @@ from ..schemas.invoice import (
 from ..schemas.transaction import InvoiceDetailResponse
 from ..services.summary_service import calculate_invoice_summary
 from ..services.transaction_serialization import serialize_transaction_out
+from .institutions import get_owned_institution
 
 router = APIRouter()
 logger = logging.getLogger(__name__)
@@ -74,10 +75,17 @@ def create_card(
     current_user: User = Depends(get_current_user),
     db: Session = Depends(get_db),
 ) -> CreditCardOut:
+    institution_id = None
+    institution = body.institution.strip() if body.institution else None
+    if body.institution_id is not None:
+        inst = get_owned_institution(db, current_user.id, body.institution_id)
+        institution_id = inst.id
+        institution = inst.name
     card = CreditCard(
         user_id=current_user.id,
         name=body.name.strip(),
-        institution=body.institution.strip() if body.institution else None,
+        institution=institution,
+        institution_id=institution_id,
         closing_day=body.closing_day,
         due_day=body.due_day,
         credit_limit=body.credit_limit,

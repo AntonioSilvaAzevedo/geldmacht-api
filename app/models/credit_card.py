@@ -12,6 +12,7 @@ class CreditCard(Base):
     user_id     = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     name        = Column(String(120), nullable=False)
     institution = Column(String(120), nullable=True)
+    institution_id = Column(Integer, ForeignKey("institutions.id", ondelete="SET NULL"), nullable=True, index=True)
     closing_day = Column(Integer, nullable=False)
     due_day     = Column(Integer, nullable=False)
     # Limite informado manualmente pelo usuário. Nullable; quando preenchido, > 0.
@@ -21,6 +22,7 @@ class CreditCard(Base):
     updated_at  = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)
 
     user         = relationship("User", back_populates="credit_cards")
+    institution_ref = relationship("Institution", back_populates="credit_cards")
     transactions = relationship("Transaction", back_populates="card")
     invoices     = relationship("Invoice", back_populates="card", cascade="all, delete-orphan")
 
