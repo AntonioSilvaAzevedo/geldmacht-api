@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator
 class CreditCardBase(BaseModel):
     name: str = Field(..., min_length=1, max_length=120)
     institution: str | None = Field(None, max_length=120)
+    institution_id: int | None = None
     closing_day: int = Field(..., ge=1, le=31)
     due_day: int = Field(..., ge=1, le=31)
     # Limite informado pelo usuário. Nullable; quando preenchido, deve ser > 0.

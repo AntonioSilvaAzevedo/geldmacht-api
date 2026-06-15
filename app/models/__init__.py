@@ -3,6 +3,7 @@ from .bank_account import BankAccount
 from .category import Category
 from .credit_card import CreditCard
 from .import_batch import ImportBatch
+from .institution import Institution
 from .invoice import Invoice
 from .release_note import ReleaseNote, UserReleaseNoteView
 from .transaction import Transaction
@@ -14,6 +15,7 @@ __all__ = [
     "Category",
     "CreditCard",
     "ImportBatch",
+    "Institution",
     "Invoice",
     "ReleaseNote",
     "Transaction",
