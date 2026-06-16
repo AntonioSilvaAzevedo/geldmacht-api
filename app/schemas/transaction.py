@@ -12,6 +12,12 @@ TRANSACTION_TYPES = frozenset({"income", "expense", "transfer", "payment", "adju
 IMPORT_KINDS = frozenset({"credit_card_invoice", "bank_statement"})
 
 
+class ManualLaunchEligibility(BaseModel):
+    has_account: bool
+    has_card: bool
+    can_launch: bool
+
+
 class TransactionBase(BaseModel):
     date: date
     description: str

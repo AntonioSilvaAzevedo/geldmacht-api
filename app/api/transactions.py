@@ -15,6 +15,7 @@ from ..models.invoice import Invoice
 from ..models.transaction import Transaction
 from ..schemas.transaction import (
     InvoiceTransactionsResponse,
+    ManualLaunchEligibility,
     ManualTransactionCreate,
     TransactionOut,
     TransactionUpdate,
@@ -23,6 +24,27 @@ from ..services.summary_service import calculate_invoice_summary
 from ..services.transaction_serialization import serialize_transaction_out
 
 router = APIRouter()
+
+
+@router.get(
+    "/transactions/manual-eligibility",
+    response_model=ManualLaunchEligibility,
+    summary="Indica se o usuário pode criar lançamento manual",
+)
+def manual_eligibility(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> ManualLaunchEligibility:
+    has_account = (
+        db.query(BankAccount.id)
+        .filter(BankAccount.user_id == current_user.id, BankAccount.is_active.is_(True))
+        .first()
+        is not None
+    )
+    has_card = (
+        db.query(CreditCard.id).filter(CreditCard.user_id == current_user.id).first() is not None
+    )
+    return ManualLaunchEligibility(has_account=has_account, has_card=has_card, can_launch=has_account)
 
 
 def _apply_category_patch(
