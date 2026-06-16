@@ -47,13 +47,13 @@ def _apply_category_patch(
         raise HTTPException(status_code=404, detail="Categoria não encontrada.")
 
     if tx.bank_account_id is not None:
-        if category.scope != "bank":
+        if not category.applies_to_bank:
             raise HTTPException(
                 status_code=400,
-                detail="Use uma categoria com escopo conta bancária (bank).",
+                detail="Use uma categoria disponível para conta bancária.",
             )
     elif tx.card_id is not None:
-        if category.scope != "credit_card":
+        if not category.applies_to_credit_card:
             raise HTTPException(
                 status_code=400,
                 detail="Categoria incompatível com lançamento de cartão.",
@@ -64,12 +64,12 @@ def _apply_category_patch(
                 detail="Categoria não é aplicável a este cartão.",
             )
     else:
-        if category.scope not in ("credit_card", "bank"):
+        if not (category.applies_to_bank or category.applies_to_credit_card):
             raise HTTPException(status_code=400, detail="Categoria incompatível com este lançamento.")
-        if category.scope == "credit_card" and category.card_id is not None:
+        if category.card_id is not None:
             raise HTTPException(
                 status_code=400,
-                detail="Para lançamentos sem cartão, use categoria global ou escopo conta bancária.",
+                detail="Para lançamentos sem cartão, use categoria global ou de conta bancária.",
             )
 
     tx.category_id = category.id
@@ -100,7 +100,7 @@ def _build_manual_tx(
         category = db.query(Category).filter(
             Category.id == body.category_id,
             Category.user_id == current_user.id,
-            Category.scope == "bank",
+            Category.applies_to_bank.is_(True),
         ).first()
         if not category:
             raise HTTPException(status_code=404, detail="Categoria não encontrada ou incompatível.")
