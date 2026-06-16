@@ -1,4 +1,4 @@
-from sqlalchemy import Column, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String
 from sqlalchemy.orm import relationship
 from sqlalchemy.sql import func
 
@@ -12,6 +12,8 @@ class Category(Base):
     user_id    = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     name       = Column(String(120), nullable=False)
     scope      = Column(String(50), nullable=False, index=True)
+    applies_to_bank        = Column(Boolean, nullable=False, server_default="0")
+    applies_to_credit_card = Column(Boolean, nullable=False, server_default="0")
     color      = Column(String(20), nullable=True)
     icon       = Column(String(50), nullable=True)
 

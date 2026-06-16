@@ -39,7 +39,8 @@ def _validate_parent_for_user(
     db: Session,
     user_id: int,
     parent_id: int | None,
-    scope: str,
+    applies_to_bank: bool,
+    applies_to_credit_card: bool,
     card_id: int | None,
     self_id: int | None = None,
 ) -> Category | None:
@@ -68,10 +69,13 @@ def _validate_parent_for_user(
             status_code=400,
             detail="Não é permitido criar subcategoria de subcategoria.",
         )
-    if parent.scope != scope:
+    if (
+        parent.applies_to_bank != applies_to_bank
+        or parent.applies_to_credit_card != applies_to_credit_card
+    ):
         raise HTTPException(
             status_code=400,
-            detail="Subcategoria deve ter o mesmo escopo da categoria pai.",
+            detail="Subcategoria deve ter o mesmo destino da categoria pai.",
         )
     # Regra de card: subcategoria deve respeitar a categoria pai.
     parent_card = parent.card_id
@@ -101,7 +105,10 @@ def list_categories(
     if scope:
         if scope not in VALID_CATEGORY_SCOPES:
             raise HTTPException(status_code=422, detail="Escopo de categoria inválido.")
-        query = query.filter(Category.scope == scope)
+        if scope == "bank":
+            query = query.filter(Category.applies_to_bank.is_(True))
+        else:
+            query = query.filter(Category.applies_to_credit_card.is_(True))
     if card_id is not None:
         # Valida que o cartão é do usuário (404 se for de outro).
         _validate_card_for_user(db, current_user.id, card_id)
@@ -121,14 +128,30 @@ def create_category(
     card_id = body.card_id if (body.card_id and body.card_id > 0) else None
     parent_id = body.parent_id if (body.parent_id and body.parent_id > 0) else None
 
-    if body.scope == "bank" and card_id is not None:
+    applies_to_bank = body.applies_to_bank
+    applies_to_credit_card = body.applies_to_credit_card
+    if not applies_to_bank and not applies_to_credit_card:
+        if body.scope == "bank":
+            applies_to_bank = True
+        elif body.scope == "credit_card":
+            applies_to_credit_card = True
+    if not applies_to_bank and not applies_to_credit_card:
+        raise HTTPException(
+            status_code=422,
+            detail="Informe ao menos um destino (conta e/ou cartão de crédito).",
+        )
+    primary_scope = "bank" if applies_to_bank else "credit_card"
+
+    if card_id is not None and not (applies_to_credit_card and not applies_to_bank):
         raise HTTPException(
             status_code=400,
-            detail="Categorias de conta bancária não utilizam cartão (card_id deve ser vazio).",
+            detail="Cartão específico só é permitido em categoria exclusiva de cartão de crédito.",
         )
 
     _validate_card_for_user(db, current_user.id, card_id)
-    parent = _validate_parent_for_user(db, current_user.id, parent_id, body.scope, card_id)
+    parent = _validate_parent_for_user(
+        db, current_user.id, parent_id, applies_to_bank, applies_to_credit_card, card_id,
+    )
 
     # Se a pai tem card específico e a sub não enviou card_id, herda da pai.
     effective_card_id = card_id
@@ -138,7 +161,9 @@ def create_category(
     category = Category(
         user_id=current_user.id,
         name=body.name.strip(),
-        scope=body.scope,
+        scope=primary_scope,
+        applies_to_bank=applies_to_bank,
+        applies_to_credit_card=applies_to_credit_card,
         color=body.color,
         icon=body.icon,
         card_id=effective_card_id,
@@ -162,6 +187,17 @@ def update_category(
 
     if body.name is not None:
         category.name = body.name.strip()
+    if body.applies_to_bank is not None:
+        category.applies_to_bank = body.applies_to_bank
+    if body.applies_to_credit_card is not None:
+        category.applies_to_credit_card = body.applies_to_credit_card
+    if body.applies_to_bank is not None or body.applies_to_credit_card is not None:
+        if not category.applies_to_bank and not category.applies_to_credit_card:
+            raise HTTPException(
+                status_code=422,
+                detail="Informe ao menos um destino (conta e/ou cartão de crédito).",
+            )
+        category.scope = "bank" if category.applies_to_bank else "credit_card"
     if body.scope is not None:
         category.scope = body.scope
     if body.color is not None:
@@ -202,7 +238,9 @@ def update_category(
                     detail="Categoria possui subcategorias e não pode virar subcategoria.",
                 )
             parent = _validate_parent_for_user(
-                db, current_user.id, new_parent_id, category.scope, category.card_id, self_id=category.id,
+                db, current_user.id, new_parent_id,
+                category.applies_to_bank, category.applies_to_credit_card,
+                category.card_id, self_id=category.id,
             )
             category.parent_id = parent.id if parent else None
             # Herda card_id se a pai for específica e a sub não tiver card definido
