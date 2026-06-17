@@ -212,35 +212,6 @@ class TestManualTransaction:
         )
         assert r.status_code == 404
 
-    def test_rejects_credit_card_category(self, client, db):
-        user = create_user(db, "m3@test.com", "x", "M")
-        h = _auth(user.email)
-        acc = client.post(
-            "/api/bank-accounts",
-            json={"name": "Conta", "account_type": "checking"},
-            headers=h,
-        ).json()
-        cat = client.post(
-            "/api/categories",
-            json={"name": "Algo", "scope": "credit_card"},
-            headers=h,
-        ).json()
-
-        r = client.post(
-            "/api/transactions",
-            json={
-                "transaction_type": "income",
-                "amount": 10.0,
-                "transaction_date": "2026-05-11",
-                "description": "x",
-                "bank_account_id": acc["id"],
-                "category_id": cat["id"],
-            },
-            headers=h,
-        )
-        assert r.status_code == 404
-
-
 class TestImportKind:
     _FH = "a" * 64
     _FH_B = "b" * 64

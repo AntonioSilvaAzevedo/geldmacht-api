@@ -64,52 +64,32 @@ def _auth(email: str) -> dict:
     return {"Authorization": f"Bearer {token}"}
 
 
-class TestCategoryScopes:
-    def test_both_appears_in_both_contexts(self, client, db):
-        user = create_user(db, "cs1@test.com", "x", "U")
-        h = _auth(user.email)
-
-        client.post("/api/categories", json={"name": "Mercado", "applies_to_bank": True, "applies_to_credit_card": True}, headers=h)
-        client.post("/api/categories", json={"name": "SoConta", "applies_to_bank": True, "applies_to_credit_card": False}, headers=h)
-        client.post("/api/categories", json={"name": "SoCartao", "applies_to_bank": False, "applies_to_credit_card": True}, headers=h)
-
-        bank_names = {c["name"] for c in client.get("/api/categories?scope=bank", headers=h).json()}
-        card_names = {c["name"] for c in client.get("/api/categories?scope=credit_card", headers=h).json()}
-
-        assert bank_names == {"Mercado", "SoConta"}
-        assert card_names == {"Mercado", "SoCartao"}
-
-    def test_create_requires_destination(self, client, db):
-        user = create_user(db, "cs2@test.com", "x", "U")
-        r = client.post("/api/categories", json={"name": "X"}, headers=_auth(user.email))
-        assert r.status_code == 422
-
-    def test_scope_backcompat(self, client, db):
-        user = create_user(db, "cs3@test.com", "x", "U")
-        h = _auth(user.email)
-        r = client.post("/api/categories", json={"name": "Legacy", "scope": "bank"}, headers=h)
+class TestGlobalCategories:
+    def test_create_without_destination(self, client, db):
+        user = create_user(db, "g1@test.com", "x", "U")
+        r = client.post("/api/categories", json={"name": "Alimentação", "color": "#FF0000"}, headers=_auth(user.email))
         assert r.status_code == 200
-        assert r.json()["applies_to_bank"] is True
-        assert r.json()["applies_to_credit_card"] is False
+        assert r.json()["name"] == "Alimentação"
 
-    def test_bank_tx_accepts_both_category(self, client, db):
-        user = create_user(db, "cs4@test.com", "x", "U")
+    def test_listing_returns_all(self, client, db):
+        user = create_user(db, "g2@test.com", "x", "U")
+        h = _auth(user.email)
+        client.post("/api/categories", json={"name": "A"}, headers=h)
+        client.post("/api/categories", json={"name": "B"}, headers=h)
+        names = {c["name"] for c in client.get("/api/categories", headers=h).json()}
+        assert names == {"A", "B"}
+        legacy = {c["name"] for c in client.get("/api/categories?scope=bank", headers=h).json()}
+        assert legacy == {"A", "B"}
+
+    def test_global_category_usable_in_bank_tx(self, client, db):
+        user = create_user(db, "g3@test.com", "x", "U")
         h = _auth(user.email)
         acc = client.post("/api/bank-accounts", json={"name": "Conta", "account_type": "checking"}, headers=h).json()
-        both = client.post("/api/categories", json={"name": "Compartilhada", "applies_to_bank": True, "applies_to_credit_card": True}, headers=h).json()
-        card_only = client.post("/api/categories", json={"name": "Cartao", "applies_to_bank": False, "applies_to_credit_card": True}, headers=h).json()
-
-        ok = client.post(
+        cat = client.post("/api/categories", json={"name": "Mercado"}, headers=h).json()
+        r = client.post(
             "/api/transactions",
-            json={"transaction_type": "expense", "amount": -50, "transaction_date": "2026-06-01", "description": "Mercado", "bank_account_id": acc["id"], "category_id": both["id"]},
+            json={"transaction_type": "expense", "amount": -50, "transaction_date": "2026-06-01", "description": "X", "bank_account_id": acc["id"], "category_id": cat["id"]},
             headers=h,
         )
-        assert ok.status_code == 200
-        assert ok.json()["category_id"] == both["id"]
-
-        bad = client.post(
-            "/api/transactions",
-            json={"transaction_type": "expense", "amount": -50, "transaction_date": "2026-06-01", "description": "X", "bank_account_id": acc["id"], "category_id": card_only["id"]},
-            headers=h,
-        )
-        assert bad.status_code == 404
+        assert r.status_code == 200
+        assert r.json()["category_id"] == cat["id"]

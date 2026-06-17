@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, Field, field_validator
 
 
 VALID_CATEGORY_SCOPES = {"credit_card", "bank"}
@@ -35,11 +35,7 @@ class CategoryBase(BaseModel):
 
 
 class CategoryCreate(CategoryBase):
-    @model_validator(mode="after")
-    def validate_destination(self) -> "CategoryCreate":
-        if not self.applies_to_bank and not self.applies_to_credit_card and self.scope is None:
-            raise ValueError("Informe ao menos um destino (conta e/ou cartão de crédito).")
-        return self
+    pass
 
 
 class CategoryUpdate(BaseModel):
