@@ -19,6 +19,7 @@ from ..schemas.invoice import (
     TopCategoryItem,
 )
 from ..schemas.transaction import InvoiceDetailResponse
+from ..services.institution_service import delete_card_records
 from ..services.summary_service import calculate_invoice_summary
 from ..services.transaction_serialization import serialize_transaction_out
 from .institutions import get_owned_institution
@@ -132,22 +133,7 @@ def delete_card(
     db: Session = Depends(get_db),
 ) -> dict[str, bool]:
     card = _get_user_card(db, current_user.id, card_id)
-    # Limpa invoice_id das transactions antes de excluir invoices (FK SET NULL)
-    db.query(Transaction).filter(
-        Transaction.user_id == current_user.id,
-        Transaction.card_id == card.id,
-    ).update({"invoice_id": None}, synchronize_session=False)
-    # Exclui transactions do cartão
-    db.query(Transaction).filter(
-        Transaction.user_id == current_user.id,
-        Transaction.card_id == card.id,
-    ).delete(synchronize_session=False)
-    # Exclui invoices do cartão
-    db.query(Invoice).filter(
-        Invoice.user_id == current_user.id,
-        Invoice.card_id == card.id,
-    ).delete(synchronize_session=False)
-    db.delete(card)
+    delete_card_records(db, current_user.id, card)
     db.commit()
     return {"deleted": True}
 
