@@ -9,6 +9,7 @@ from ..models.credit_card import CreditCard
 from ..models.institution import Institution
 from ..models.user import User
 from ..schemas.institution import InstitutionCreate, InstitutionOut
+from ..services.institution_service import delete_institution_cascade
 
 router = APIRouter()
 
@@ -78,3 +79,14 @@ def create_institution(
     db.commit()
     db.refresh(inst)
     return _serialize(inst, 0, 0)
+
+
+@router.delete("/institutions/{institution_id}", summary="Excluir instituição e dados vinculados")
+def delete_institution(
+    institution_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
+    inst = get_owned_institution(db, current_user.id, institution_id)
+    delete_institution_cascade(db, current_user.id, inst)
+    return {"deleted": True}
