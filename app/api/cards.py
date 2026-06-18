@@ -20,8 +20,15 @@ from ..schemas.invoice import (
     TopCategoryItem,
 )
 from ..schemas.transaction import InvoiceDetailResponse
+from ..models.recurring_expense import RecurringExpense
+from ..schemas.recurring_expense import RecurringExpenseCreate, RecurringExpenseOut
 from ..services.institution_service import delete_card_records
-from ..services.invoice_projection import annual_card_invoices, default_year, invoice_net_total_expr
+from ..services.invoice_projection import (
+    annual_card_invoices,
+    current_month,
+    default_year,
+    invoice_net_total_expr,
+)
 from ..services.summary_service import calculate_invoice_summary
 from ..services.transaction_serialization import serialize_transaction_out
 from .institutions import get_owned_institution
@@ -476,3 +483,83 @@ def get_invoice_by_month(
         raise HTTPException(status_code=404, detail="Fatura não encontrada para este mês.")
 
     return get_invoice_detail(card_id, invoice.id, current_user, db)
+
+
+@router.get(
+    "/cards/{card_id}/recurring",
+    response_model=list[RecurringExpenseOut],
+    summary="Listar assinaturas recorrentes do cartão",
+)
+def list_card_recurring(
+    card_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[RecurringExpenseOut]:
+    _get_user_card(db, current_user.id, card_id)
+    return (
+        db.query(RecurringExpense)
+        .filter(
+            RecurringExpense.card_id == card_id,
+            RecurringExpense.user_id == current_user.id,
+            RecurringExpense.active.is_(True),
+        )
+        .order_by(RecurringExpense.description)
+        .all()
+    )
+
+
+@router.post(
+    "/cards/{card_id}/recurring",
+    response_model=RecurringExpenseOut,
+    summary="Marcar lançamento como assinatura recorrente",
+)
+def create_card_recurring(
+    card_id: int,
+    body: RecurringExpenseCreate,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> RecurringExpenseOut:
+    _get_user_card(db, current_user.id, card_id)
+    if body.category_id is not None:
+        owns_category = db.query(Category).filter(
+            Category.id == body.category_id,
+            Category.user_id == current_user.id,
+        ).first()
+        if not owns_category:
+            raise HTTPException(status_code=404, detail="Categoria não encontrada.")
+    recurring = RecurringExpense(
+        user_id=current_user.id,
+        card_id=card_id,
+        description=body.description.strip(),
+        amount=body.amount,
+        category_id=body.category_id,
+        start_month=body.start_month or current_month(),
+        active=True,
+    )
+    db.add(recurring)
+    db.commit()
+    db.refresh(recurring)
+    return recurring
+
+
+@router.delete(
+    "/cards/{card_id}/recurring/{recurring_id}",
+    summary="Remover assinatura recorrente",
+)
+def delete_card_recurring(
+    card_id: int,
+    recurring_id: int,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> dict[str, bool]:
+    _get_user_card(db, current_user.id, card_id)
+    recurring = db.query(RecurringExpense).filter(
+        RecurringExpense.id == recurring_id,
+        RecurringExpense.card_id == card_id,
+        RecurringExpense.user_id == current_user.id,
+    ).first()
+    if not recurring:
+        raise HTTPException(status_code=404, detail="Assinatura não encontrada.")
+    db.delete(recurring)
+    db.commit()
+    return {"deleted": True}
