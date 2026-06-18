@@ -3,7 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
 
-VALID_CATEGORY_SCOPES = {"credit_card", "bank"}
+VALID_CATEGORY_SCOPES = {"global", "credit_card", "bank"}
 
 
 class CategoryBase(BaseModel):
