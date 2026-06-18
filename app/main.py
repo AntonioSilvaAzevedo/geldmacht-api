@@ -10,8 +10,9 @@ Docs interativas: http://localhost:8010/docs
 """
 import logging
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from .config import settings
 from .api import bank_accounts, cards, categories, dashboard, import_transactions, institutions, onboarding, release_notes, transactions, upload
@@ -30,6 +31,20 @@ app = FastAPI(
     docs_url="/docs",
     redoc_url="/redoc",
 )
+
+@app.middleware("http")
+async def handle_unhandled_errors(request: Request, call_next):
+    try:
+        return await call_next(request)
+    except Exception:
+        logging.getLogger(__name__).exception(
+            "Erro não tratado em %s %s", request.method, request.url.path
+        )
+        return JSONResponse(
+            status_code=500,
+            content={"detail": "Erro interno do servidor."},
+        )
+
 
 # ── CORS — lê origens da variável CORS_ORIGINS (vírgula-separadas) ──────────
 _origins = [o.strip() for o in settings.cors_origins.split(",") if o.strip()]
