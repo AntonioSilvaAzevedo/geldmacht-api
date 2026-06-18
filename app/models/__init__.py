@@ -5,6 +5,7 @@ from .credit_card import CreditCard
 from .import_batch import ImportBatch
 from .institution import Institution
 from .invoice import Invoice
+from .recurring_expense import RecurringExpense
 from .release_note import ReleaseNote, UserReleaseNoteView
 from .transaction import Transaction
 from .user import User
@@ -17,6 +18,7 @@ __all__ = [
     "ImportBatch",
     "Institution",
     "Invoice",
+    "RecurringExpense",
     "ReleaseNote",
     "Transaction",
     "User",
