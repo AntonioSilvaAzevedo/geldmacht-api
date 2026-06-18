@@ -127,6 +127,22 @@ class TestAnnualCardInvoices:
         months = client.get(f"/api/cards/{card['id']}/annual-invoices?year=2026", headers=h).json()
         assert [m["due_month"] for m in months] == ["2026-05"]
 
+    def test_card_without_invoices_returns_empty_list(self, client, db):
+        user = create_user(db, "ai4@test.com", "x", "U")
+        h = _auth(user.email)
+        card = _card(client, h)
+
+        res = client.get(f"/api/cards/{card['id']}/annual-invoices?year=2026", headers=h)
+        assert res.status_code == 200
+        assert res.json() == []
+
+    def test_nonexistent_card_returns_404(self, client, db):
+        user = create_user(db, "ai5@test.com", "x", "U")
+        h = _auth(user.email)
+
+        res = client.get("/api/cards/999999/annual-invoices", headers=h)
+        assert res.status_code == 404
+
     def test_filters_by_year(self, client, db):
         user = create_user(db, "ai3@test.com", "x", "U")
         h = _auth(user.email)
