@@ -4,6 +4,7 @@ from sqlalchemy import and_, case, func, literal
 from sqlalchemy.orm import Session
 
 from ..models.invoice import Invoice
+from ..models.recurring_expense import RecurringExpense
 from ..models.transaction import Transaction
 
 _MONTHS = [
@@ -82,6 +83,29 @@ def annual_card_invoices(db: Session, user_id: int, card_id: int, year: int) -> 
                     continue
                 predicted_by_month[month] = round(predicted_by_month.get(month, 0.0) + value, 2)
 
+        active_subs = (
+            db.query(RecurringExpense)
+            .filter(
+                RecurringExpense.card_id == card_id,
+                RecurringExpense.user_id == user_id,
+                RecurringExpense.active.is_(True),
+            )
+            .all()
+        )
+        if active_subs:
+            year_end = f"{year:04d}-12"
+            offset = 1
+            while True:
+                month = _add_months(latest_month, offset)
+                offset += 1
+                if month > year_end:
+                    break
+                if month in real_by_month:
+                    continue
+                sub_sum = round(sum(s.amount for s in active_subs if s.start_month <= month), 2)
+                if sub_sum > 0:
+                    predicted_by_month[month] = round(predicted_by_month.get(month, 0.0) + sub_sum, 2)
+
     prefix = f"{year:04d}-"
     months: list[dict] = []
     for due_month, (invoice, total) in real_by_month.items():
@@ -109,3 +133,8 @@ def annual_card_invoices(db: Session, user_id: int, card_id: int, year: int) -> 
 
 def default_year() -> int:
     return date.today().year
+
+
+def current_month() -> str:
+    today = date.today()
+    return f"{today.year:04d}-{today.month:02d}"

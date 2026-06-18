@@ -4,10 +4,15 @@ from ..models.credit_card import CreditCard
 from ..models.import_batch import ImportBatch
 from ..models.institution import Institution
 from ..models.invoice import Invoice
+from ..models.recurring_expense import RecurringExpense
 from ..models.transaction import Transaction
 
 
 def delete_card_records(db: Session, user_id: int, card: CreditCard) -> None:
+    db.query(RecurringExpense).filter(
+        RecurringExpense.user_id == user_id,
+        RecurringExpense.card_id == card.id,
+    ).delete(synchronize_session=False)
     db.query(Transaction).filter(
         Transaction.user_id == user_id,
         Transaction.card_id == card.id,
