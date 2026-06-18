@@ -20,9 +20,8 @@ class Settings(BaseSettings):
     algorithm: str = "HS256"
     access_token_expire_minutes: int = 7 * 24 * 60  # 7 dias
 
-    # Google OAuth
-    google_client_id: str = ""
-    google_client_secret: str = ""
+    # Usuário de teste — seed só roda quando habilitado por ambiente
+    seed_test_user: bool = False
 
 
 settings = Settings()

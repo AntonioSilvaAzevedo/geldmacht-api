@@ -18,6 +18,7 @@ from .config import settings
 from .api import bank_accounts, cards, categories, dashboard, import_transactions, institutions, onboarding, release_notes, transactions, upload
 from .api.auth import router as auth_router
 from .services.release_notes_seed import seed_release_notes
+from .services.test_user_seed import seed_test_user
 
 logging.basicConfig(
     level=logging.DEBUG if settings.debug else logging.INFO,
@@ -106,6 +107,15 @@ def _run_release_notes_seed() -> None:
     except Exception:
         # Não trava o startup do app por falha de seed (logs já registrados).
         logging.getLogger(__name__).exception("Falha ao seedar release notes no startup")
+
+
+@app.on_event("startup")
+def _run_test_user_seed() -> None:
+    """Idempotente — só cria o usuário de teste quando SEED_TEST_USER está habilitado."""
+    try:
+        seed_test_user()
+    except Exception:
+        logging.getLogger(__name__).exception("Falha ao seedar usuário de teste no startup")
 
 
 @app.get("/", tags=["Health"])

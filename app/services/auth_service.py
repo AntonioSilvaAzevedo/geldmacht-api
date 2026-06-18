@@ -50,29 +50,3 @@ def create_user(db: Session, email: str, password: str, name: str = "") -> User:
     db.commit()
     db.refresh(user)
     return user
-
-
-def get_or_create_google_user(
-    db: Session,
-    google_id: str,
-    email: str,
-    name: str,
-) -> User:
-    # Buscar por google_id primeiro
-    user = db.query(User).filter(User.google_id == google_id).first()
-    if user:
-        return user
-
-    # Buscar por email (conta já existe sem Google)
-    user = get_user_by_email(db, email)
-    if user:
-        user.google_id = google_id
-        db.commit()
-        return user
-
-    # Criar novo usuário via Google
-    user = User(email=email, name=name or None, google_id=google_id)
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-    return user

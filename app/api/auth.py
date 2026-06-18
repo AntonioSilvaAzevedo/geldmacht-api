@@ -1,5 +1,4 @@
 import logging
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, status
 from pydantic import BaseModel, EmailStr
 from sqlalchemy.orm import Session
@@ -10,7 +9,6 @@ from ..models.user import User
 from ..services.auth_service import (
     create_access_token,
     create_user,
-    get_or_create_google_user,
     get_user_by_email,
     verify_password,
 )
@@ -30,10 +28,6 @@ class RegisterRequest(BaseModel):
     email: EmailStr
     password: str
     name: str = ""
-
-
-class GoogleTokenRequest(BaseModel):
-    access_token: str
 
 
 class UserOut(BaseModel):
@@ -81,34 +75,6 @@ def register(body: RegisterRequest, db: Session = Depends(get_db)) -> RegisterRe
     logger.info("Registro: %s", user.email)
     return RegisterResponse(
         message="Usuário criado com sucesso",
-        user=UserOut(email=user.email, name=user.name),
-    )
-
-
-# ── Google OAuth ───────────────────────────────────────────────────────────────
-
-@router.post("/google", response_model=AuthResponse)
-async def google_auth(body: GoogleTokenRequest, db: Session = Depends(get_db)) -> AuthResponse:
-    async with httpx.AsyncClient() as client:
-        res = await client.get(
-            "https://www.googleapis.com/oauth2/v2/userinfo",
-            headers={"Authorization": f"Bearer {body.access_token}"},
-            timeout=10,
-        )
-    if res.status_code != 200:
-        raise HTTPException(status_code=status.HTTP_401_UNAUTHORIZED, detail="Token Google inválido")
-
-    data = res.json()
-    user = get_or_create_google_user(
-        db,
-        google_id=data["id"],
-        email=data["email"],
-        name=data.get("name", ""),
-    )
-    token = create_access_token({"sub": user.email})
-    logger.info("Google OAuth: %s", user.email)
-    return AuthResponse(
-        access_token=token,
         user=UserOut(email=user.email, name=user.name),
     )
 
