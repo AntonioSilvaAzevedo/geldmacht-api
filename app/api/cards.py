@@ -13,6 +13,7 @@ from ..models.user import User
 from ..schemas.credit_card import CreditCardCreate, CreditCardOut, CreditCardUpdate
 from ..models.category import Category
 from ..schemas.invoice import (
+    AnnualInvoiceMonth,
     CardDashboardResponse,
     InvoiceListItem,
     InvoiceMini,
@@ -20,6 +21,7 @@ from ..schemas.invoice import (
 )
 from ..schemas.transaction import InvoiceDetailResponse
 from ..services.institution_service import delete_card_records
+from ..services.invoice_projection import annual_card_invoices, default_year, invoice_net_total_expr
 from ..services.summary_service import calculate_invoice_summary
 from ..services.transaction_serialization import serialize_transaction_out
 from .institutions import get_owned_institution
@@ -155,21 +157,7 @@ def list_card_invoices(
 ) -> list[InvoiceListItem]:
     _get_user_card(db, current_user.id, card_id)
 
-    # Agrupa total e contagem por invoice
-    # computed_total = sum(|despesas|) - sum(créditos/estornos)  [exclui pagamentos]
-    _net_total = func.coalesce(
-        func.sum(
-            case(
-                (Transaction.amount < 0, func.abs(Transaction.amount)),
-                (
-                    and_(Transaction.amount > 0, Transaction.is_payment == False),
-                    -Transaction.amount,
-                ),
-                else_=literal(0.0),
-            )
-        ),
-        0.0,
-    )
+    _net_total = invoice_net_total_expr()
     _expense_count = func.sum(
         case((Transaction.amount < 0, literal(1)), else_=literal(0))
     )
@@ -206,6 +194,26 @@ def list_card_invoices(
             label=_label_for_due_month(invoice.due_month),
         ))
     return result
+
+
+@router.get(
+    "/cards/{card_id}/annual-invoices",
+    response_model=list[AnnualInvoiceMonth],
+    summary="Faturas do ano (reais + previstas)",
+    description=(
+        "Retorna apenas os meses do ano com fatura real ou previsão "
+        "(parcelas futuras), com total e marca de previsto."
+    ),
+)
+def list_annual_card_invoices(
+    card_id: int,
+    year: int | None = Query(default=None),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[AnnualInvoiceMonth]:
+    _get_user_card(db, current_user.id, card_id)
+    target_year = year or default_year()
+    return annual_card_invoices(db, current_user.id, card_id, target_year)
 
 
 @router.get(

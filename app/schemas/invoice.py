@@ -62,6 +62,14 @@ class InvoiceListItem(BaseModel):
     label: str = ""                      # ex: "Vencimento em Abril/2026"
 
 
+class AnnualInvoiceMonth(BaseModel):
+    due_month: str
+    label: str
+    total: float = 0.0
+    predicted: bool = False
+    invoice_id: int | None = None
+
+
 class InvoiceMini(BaseModel):
     """Versão mínima para uso em respostas agregadas (dashboard)."""
     id: int
