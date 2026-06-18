@@ -234,12 +234,11 @@ def _import_bank_statement(
                 row = db.query(Category).filter(
                     Category.id == cid,
                     Category.user_id == current_user.id,
-                    Category.scope == "bank",
                 ).first()
                 if not row:
                     raise HTTPException(
-                        status_code=400,
-                        detail="Categoria não encontrada ou não é aplicável à conta (escopo deve ser bank).",
+                        status_code=404,
+                        detail="Categoria não encontrada.",
                     )
                 category_cache[cid] = row
             cat = category_cache[cid]
@@ -468,7 +467,6 @@ def import_selected_transactions(
                 category = db.query(Category).filter(
                     Category.id == tx.category_id,
                     Category.user_id == current_user.id,
-                    Category.scope == "credit_card",
                 ).first()
                 if not category:
                     raise HTTPException(status_code=404, detail="Categoria não encontrada.")

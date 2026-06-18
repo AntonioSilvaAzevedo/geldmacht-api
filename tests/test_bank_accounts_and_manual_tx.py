@@ -304,7 +304,7 @@ class TestImportKind:
         r = client.post("/api/import", json=payload, headers=h)
         assert r.status_code == 400
 
-    def test_bank_statement_rejects_credit_card_category(self, client, db):
+    def test_bank_statement_accepts_any_user_category(self, client, db):
         user = create_user(db, "i3b@test.com", "x", "I")
         h = _auth(user.email)
         acc = client.post(
@@ -336,7 +336,8 @@ class TestImportKind:
             ],
         }
         r = client.post("/api/import", json=payload, headers=h)
-        assert r.status_code == 400
+        assert r.status_code == 200
+        assert r.json()["imported"] == 1
 
     def test_bank_statement_duplicate_fitid_skipped(self, client, db):
         user = create_user(db, "i4@test.com", "x", "I")
