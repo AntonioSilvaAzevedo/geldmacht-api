@@ -70,6 +70,15 @@ class TestGlobalCategories:
         r = client.post("/api/categories", json={"name": "Alimentação", "color": "#FF0000"}, headers=_auth(user.email))
         assert r.status_code == 200
         assert r.json()["name"] == "Alimentação"
+        assert r.json()["scope"] == "global"
+
+    def test_global_category_listed_for_any_import(self, client, db):
+        user = create_user(db, "g4@test.com", "x", "U")
+        h = _auth(user.email)
+        client.post("/api/categories", json={"name": "Mercado"}, headers=h)
+        for scope in ("bank", "credit_card"):
+            names = {c["name"] for c in client.get(f"/api/categories?scope={scope}", headers=h).json()}
+            assert "Mercado" in names
 
     def test_listing_returns_all(self, client, db):
         user = create_user(db, "g2@test.com", "x", "U")

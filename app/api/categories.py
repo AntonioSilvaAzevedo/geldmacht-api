@@ -71,7 +71,7 @@ def create_category(
     category = Category(
         user_id=current_user.id,
         name=body.name.strip(),
-        scope=body.scope or "bank",
+        scope=body.scope or "global",
         applies_to_bank=True,
         applies_to_credit_card=True,
         color=body.color,
