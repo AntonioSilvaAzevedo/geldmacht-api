@@ -234,12 +234,11 @@ def _import_bank_statement(
                 row = db.query(Category).filter(
                     Category.id == cid,
                     Category.user_id == current_user.id,
-                    Category.scope == "bank",
                 ).first()
                 if not row:
                     raise HTTPException(
-                        status_code=400,
-                        detail="Categoria não encontrada ou não é aplicável à conta (escopo deve ser bank).",
+                        status_code=404,
+                        detail="Categoria não encontrada.",
                     )
                 category_cache[cid] = row
             cat = category_cache[cid]
@@ -468,7 +467,6 @@ def import_selected_transactions(
                 category = db.query(Category).filter(
                     Category.id == tx.category_id,
                     Category.user_id == current_user.id,
-                    Category.scope == "credit_card",
                 ).first()
                 if not category:
                     raise HTTPException(status_code=404, detail="Categoria não encontrada.")
@@ -497,18 +495,23 @@ def import_selected_transactions(
         ).first()
 
         if duplicate:
-            # Se é importação de fatura e a duplicata está sem invoice_id (ou com invoice
-            # diferente), re-vincula à fatura atual para evitar faturas vazias após reimportação.
-            if is_card_invoice and invoice is not None and duplicate.invoice_id != invoice.id:
-                logger.info(
-                    "Duplicata re-vinculada: tx_id=%s invoice_id %s → %s",
-                    duplicate.id, duplicate.invoice_id, invoice.id,
+            if is_card_invoice and invoice is not None:
+                if duplicate.invoice_id != invoice.id:
+                    logger.info(
+                        "Duplicata re-vinculada: tx_id=%s invoice_id %s → %s",
+                        duplicate.id, duplicate.invoice_id, invoice.id,
+                    )
+                    duplicate.invoice_id = invoice.id
+                    if duplicate.card_id is None:
+                        duplicate.card_id = card.id if card else None
+                    imported_transactions.append(tx)
+                duplicate_is_systemic = bool(duplicate.is_payment) or (
+                    duplicate.installment_total is not None
+                    and duplicate.installment_total > 1
                 )
-                duplicate.invoice_id = invoice.id
-                if duplicate.card_id is None:
-                    duplicate.card_id = card.id if card else None
-                # Conta a duplicata como importada para calcular summary corretamente
-                imported_transactions.append(tx)
+                if category is not None and not duplicate_is_systemic:
+                    duplicate.category_id = category.id
+                    duplicate.category = category.name
             else:
                 logger.debug("Duplicata ignorada: %s %s %.2f", tx.date, tx.description[:40], tx.amount)
             skipped += 1
