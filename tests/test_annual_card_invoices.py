@@ -164,3 +164,61 @@ class TestAnnualCardInvoices:
         assert [m["due_month"] for m in months_2025] == ["2025-12"]
         assert [m["due_month"] for m in months_2026] == ["2026-01", "2026-02", "2026-03"]
         assert all(m["predicted"] for m in months_2026)
+
+
+class TestPredictedInvoiceComposition:
+    def test_returns_installments_for_predicted_month(self, client, db):
+        user = create_user(db, "pi1@test.com", "x", "U")
+        h = _auth(user.email)
+        card = _card(client, h)
+        inv = Invoice(user_id=user.id, card_id=card["id"], due_month="2026-05", total_amount=300.0)
+        db.add(inv)
+        db.commit()
+        db.refresh(inv)
+        db.add(Transaction(
+            user_id=user.id, date=date(2026, 5, 10), description="Notebook 1/3",
+            amount=-300.0, card_id=card["id"], invoice_id=inv.id,
+            installment_current=1, installment_total=3,
+        ))
+        db.commit()
+
+        res = client.get(f"/api/cards/{card['id']}/predicted-invoices/2026-06", headers=h)
+        assert res.status_code == 200
+        body = res.json()
+        assert body["due_month"] == "2026-06"
+        assert body["total"] == 300.0
+        assert len(body["items"]) == 1
+        item = body["items"][0]
+        assert item["origin"] == "installment"
+        assert item["installment_current"] == 2
+        assert item["installment_total"] == 3
+        assert item["amount"] == 300.0
+
+    def test_real_month_is_not_predicted(self, client, db):
+        user = create_user(db, "pi2@test.com", "x", "U")
+        h = _auth(user.email)
+        card = _card(client, h)
+        inv = Invoice(user_id=user.id, card_id=card["id"], due_month="2026-05", total_amount=300.0)
+        db.add(inv)
+        db.commit()
+
+        res = client.get(f"/api/cards/{card['id']}/predicted-invoices/2026-05", headers=h)
+        assert res.status_code == 404
+
+    def test_month_beyond_remaining_installments_returns_404(self, client, db):
+        user = create_user(db, "pi3@test.com", "x", "U")
+        h = _auth(user.email)
+        card = _card(client, h)
+        inv = Invoice(user_id=user.id, card_id=card["id"], due_month="2026-05", total_amount=300.0)
+        db.add(inv)
+        db.commit()
+        db.refresh(inv)
+        db.add(Transaction(
+            user_id=user.id, date=date(2026, 5, 10), description="Notebook 2/3",
+            amount=-300.0, card_id=card["id"], invoice_id=inv.id,
+            installment_current=2, installment_total=3,
+        ))
+        db.commit()
+
+        assert client.get(f"/api/cards/{card['id']}/predicted-invoices/2026-06", headers=h).status_code == 200
+        assert client.get(f"/api/cards/{card['id']}/predicted-invoices/2026-07", headers=h).status_code == 404

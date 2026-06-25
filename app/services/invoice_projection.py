@@ -1,8 +1,9 @@
 from datetime import date
 
 from sqlalchemy import and_, case, func, literal
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
+from ..models.category import Category
 from ..models.invoice import Invoice
 from ..models.recurring_expense import RecurringExpense
 from ..models.transaction import Transaction
@@ -24,6 +25,12 @@ def _add_months(due_month: str, offset: int) -> str:
     year, month = (int(part) for part in due_month.split("-"))
     index = year * 12 + (month - 1) + offset
     return f"{index // 12:04d}-{index % 12 + 1:02d}"
+
+
+def _month_diff(base: str, target: str) -> int:
+    by, bm = (int(part) for part in base.split("-"))
+    ty, tm = (int(part) for part in target.split("-"))
+    return (ty * 12 + (tm - 1)) - (by * 12 + (bm - 1))
 
 
 def invoice_net_total_expr():
@@ -129,6 +136,87 @@ def annual_card_invoices(db: Session, user_id: int, card_id: int, year: int) -> 
 
     months.sort(key=lambda entry: entry["due_month"])
     return months
+
+
+def predicted_invoice_composition(
+    db: Session, user_id: int, card_id: int, due_month: str
+) -> dict | None:
+    real_rows = (
+        db.query(Invoice.due_month)
+        .filter(Invoice.card_id == card_id, Invoice.user_id == user_id)
+        .all()
+    )
+    real_months = {row[0] for row in real_rows}
+    if not real_months:
+        return None
+
+    latest_month = max(real_months)
+    if due_month in real_months or due_month <= latest_month:
+        return None
+
+    offset = _month_diff(latest_month, due_month)
+    if offset < 1:
+        return None
+
+    items: list[dict] = []
+
+    installment_txs = (
+        db.query(Transaction)
+        .options(joinedload(Transaction.category_ref))
+        .join(Invoice, Transaction.invoice_id == Invoice.id)
+        .filter(
+            Invoice.card_id == card_id,
+            Invoice.user_id == user_id,
+            Invoice.due_month == latest_month,
+            Transaction.installment_total.isnot(None),
+            Transaction.installment_current.isnot(None),
+            Transaction.installment_total > Transaction.installment_current,
+        )
+        .all()
+    )
+    for tx in installment_txs:
+        remaining = int(tx.installment_total) - int(tx.installment_current)
+        if offset > remaining:
+            continue
+        items.append({
+            "description": tx.description,
+            "amount": round(abs(float(tx.amount)), 2),
+            "origin": "installment",
+            "installment_current": int(tx.installment_current) + offset,
+            "installment_total": int(tx.installment_total),
+            "category_name": tx.category_ref.name if tx.category_ref else None,
+        })
+
+    sub_rows = (
+        db.query(RecurringExpense, Category.name)
+        .outerjoin(Category, Category.id == RecurringExpense.category_id)
+        .filter(
+            RecurringExpense.card_id == card_id,
+            RecurringExpense.user_id == user_id,
+            RecurringExpense.active.is_(True),
+            RecurringExpense.start_month <= due_month,
+        )
+        .all()
+    )
+    for sub, category_name in sub_rows:
+        items.append({
+            "description": sub.description,
+            "amount": round(float(sub.amount), 2),
+            "origin": "recurring",
+            "installment_current": None,
+            "installment_total": None,
+            "category_name": category_name,
+        })
+
+    if not items:
+        return None
+
+    return {
+        "due_month": due_month,
+        "label": month_label(due_month),
+        "total": round(sum(item["amount"] for item in items), 2),
+        "items": items,
+    }
 
 
 def default_year() -> int:

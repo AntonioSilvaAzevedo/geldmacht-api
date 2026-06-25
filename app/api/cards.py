@@ -17,6 +17,7 @@ from ..schemas.invoice import (
     CardDashboardResponse,
     InvoiceListItem,
     InvoiceMini,
+    PredictedInvoiceResponse,
     TopCategoryItem,
 )
 from ..schemas.transaction import InvoiceDetailResponse
@@ -28,6 +29,7 @@ from ..services.invoice_projection import (
     current_month,
     default_year,
     invoice_net_total_expr,
+    predicted_invoice_composition,
 )
 from ..services.summary_service import calculate_invoice_summary
 from ..services.transaction_serialization import serialize_transaction_out
@@ -221,6 +223,28 @@ def list_annual_card_invoices(
     _get_user_card(db, current_user.id, card_id)
     target_year = year or default_year()
     return annual_card_invoices(db, current_user.id, card_id, target_year)
+
+
+@router.get(
+    "/cards/{card_id}/predicted-invoices/{due_month}",
+    response_model=PredictedInvoiceResponse,
+    summary="Composição de uma fatura prevista",
+    description=(
+        "Retorna os itens que compõem a previsão de um mês (parcelas restantes "
+        "da fatura real mais recente + assinaturas recorrentes ativas) e o total previsto."
+    ),
+)
+def get_predicted_invoice(
+    card_id: int,
+    due_month: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> PredictedInvoiceResponse:
+    _get_user_card(db, current_user.id, card_id)
+    composition = predicted_invoice_composition(db, current_user.id, card_id, due_month)
+    if composition is None:
+        raise HTTPException(status_code=404, detail="Fatura prevista não encontrada para este mês.")
+    return composition
 
 
 @router.get(
