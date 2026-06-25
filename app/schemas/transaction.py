@@ -6,6 +6,7 @@ from pydantic import BaseModel, Field, field_validator, model_validator
 from .import_batch import ExistingImportBatchInfo
 from .summary import InvoiceSummary
 from .invoice import InvoiceMetadata, InvoiceCreate
+from .tag import TagOut
 
 TRANSACTION_SOURCES = frozenset({"pdf_invoice_import", "bank_statement_import", "manual"})
 TRANSACTION_TYPES = frozenset({"income", "expense", "transfer", "payment", "adjustment"})
@@ -62,6 +63,7 @@ class TransactionOut(TransactionBase):
     imported_at: datetime
     reference_month: str | None = None   # legado — mantido para compatibilidade
     billing_month: str | None = None     # legado
+    tags: list[TagOut] = []
 
     model_config = {"from_attributes": True}
 

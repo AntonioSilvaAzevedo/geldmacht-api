@@ -1,6 +1,7 @@
 """Serialização de Transaction → TransactionOut com dados de categoria hierárquica."""
 
 from app.models.transaction import Transaction
+from app.schemas.tag import TagOut
 from app.schemas.transaction import TransactionOut
 
 
@@ -12,6 +13,7 @@ def serialize_transaction_out(tx: Transaction) -> TransactionOut:
     """
     out = TransactionOut.model_validate(tx)
     out.account_type = tx.account.type if tx.account else None
+    out.tags = [TagOut.model_validate(tag) for tag in tx.tags]
 
     cref = tx.category_ref
     if cref is not None:

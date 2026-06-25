@@ -7,6 +7,7 @@ from .institution import Institution
 from .invoice import Invoice
 from .recurring_expense import RecurringExpense
 from .release_note import ReleaseNote, UserReleaseNoteView
+from .tag import Tag
 from .transaction import Transaction
 from .user import User
 
@@ -20,6 +21,7 @@ __all__ = [
     "Invoice",
     "RecurringExpense",
     "ReleaseNote",
+    "Tag",
     "Transaction",
     "User",
     "UserReleaseNoteView",

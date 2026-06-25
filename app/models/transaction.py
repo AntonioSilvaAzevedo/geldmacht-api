@@ -55,6 +55,7 @@ class Transaction(Base):
     invoice        = relationship("Invoice",        back_populates="transactions")
     bank_account   = relationship("BankAccount",    back_populates="transactions")
     import_batch   = relationship("ImportBatch",    back_populates="transactions")
+    tags           = relationship("Tag", secondary="transaction_tags", back_populates="transactions")
 
     def __repr__(self) -> str:
         sign = "+" if self.amount >= 0 else ""

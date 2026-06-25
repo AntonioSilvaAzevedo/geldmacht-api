@@ -2,7 +2,7 @@ import logging
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy import and_, case, func, literal
-from sqlalchemy.orm import Session, joinedload
+from sqlalchemy.orm import Session, joinedload, selectinload
 
 from ..database import get_db
 from ..middleware.auth import get_current_user
@@ -277,6 +277,7 @@ def get_invoice_detail(
         .options(
             joinedload(Transaction.account),
             joinedload(Transaction.category_ref).joinedload(Category.parent),
+            selectinload(Transaction.tags),
         )
         .filter(
             Transaction.invoice_id == invoice_id,
