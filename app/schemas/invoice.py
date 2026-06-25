@@ -70,6 +70,22 @@ class AnnualInvoiceMonth(BaseModel):
     invoice_id: int | None = None
 
 
+class PredictedInvoiceItem(BaseModel):
+    description: str
+    amount: float
+    origin: str
+    installment_current: int | None = None
+    installment_total: int | None = None
+    category_name: str | None = None
+
+
+class PredictedInvoiceResponse(BaseModel):
+    due_month: str
+    label: str
+    total: float = 0.0
+    items: list[PredictedInvoiceItem] = []
+
+
 class InvoiceMini(BaseModel):
     """Versão mínima para uso em respostas agregadas (dashboard)."""
     id: int
