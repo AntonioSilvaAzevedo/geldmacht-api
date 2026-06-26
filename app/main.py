@@ -15,7 +15,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from .config import settings
-from .api import bank_accounts, cards, categories, dashboard, import_transactions, institutions, onboarding, release_notes, tags, transactions, upload
+from .api import bank_accounts, cards, categories, dashboard, import_transactions, institutions, onboarding, release_notes, summary, tags, transactions, upload
 from .api.auth import router as auth_router
 from .services.release_notes_seed import seed_release_notes
 from .services.test_user_seed import seed_test_user
@@ -69,6 +69,7 @@ app.include_router(tags.router, prefix="/api", tags=["Tags"])
 app.include_router(cards.router, prefix="/api", tags=["Cartões"])
 app.include_router(categories.router, prefix="/api", tags=["Categorias"])
 app.include_router(dashboard.router, prefix="/api", tags=["Dashboard"])
+app.include_router(summary.router, prefix="/api", tags=["Resumo"])
 app.include_router(release_notes.router, prefix="/api", tags=["Release Notes"])
 app.include_router(onboarding.router, prefix="/api", tags=["Onboarding"])
 
