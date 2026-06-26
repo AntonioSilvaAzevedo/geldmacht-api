@@ -25,3 +25,12 @@ class InvoiceSummary(BaseModel):
     total_installment_value: float
     total_installment_count: int
     future_commitment: float
+
+
+class FinancialSummary(BaseModel):
+    period_label: str
+    available_balance: float
+    monthly_income: float
+    monthly_expenses: float
+    active_installments_count: int
+    future_committed_amount: float
