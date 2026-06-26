@@ -32,6 +32,7 @@ from ..services.bank_statement_import import (
     find_already_imported_batch,
     find_duplicate_bank_statement_tx,
 )
+from ..services.recurrence_service import sync_recurrence_for_transaction
 from ..services.summary_service import calculate_invoice_summary
 from ..services.transaction_serialization import serialize_transaction_out
 
@@ -561,6 +562,15 @@ def import_selected_transactions(
         "Import concluído: %d importadas, %d duplicatas ignoradas (user=%s, arquivo=%s)",
         imported, skipped, current_user.email, payload.source_file,
     )
+
+    if is_card_invoice and invoice is not None:
+        invoice_txs = db.query(Transaction).filter(
+            Transaction.invoice_id == invoice.id,
+            Transaction.user_id == current_user.id,
+        ).all()
+        for invoice_tx in invoice_txs:
+            sync_recurrence_for_transaction(db, invoice_tx)
+        db.commit()
 
     summary = None
     if is_card_invoice:

@@ -6,7 +6,8 @@ from ..middleware.auth import get_current_user
 from ..models.category import Category
 from ..models.transaction import Transaction
 from ..models.user import User
-from ..schemas.category import CategoryCreate, CategoryOut, CategoryUpdate
+from ..schemas.category import CategoryCreate, CategoryOut, CategorySuggestion, CategoryUpdate
+from ..services.recurrence_service import SYSTEM_SUGGESTIONS
 
 router = APIRouter()
 
@@ -57,6 +58,61 @@ def list_categories(
         .order_by(Category.name)
         .all()
     )
+
+
+@router.get(
+    "/categories/suggestions",
+    response_model=list[CategorySuggestion],
+    summary="Categorias sugeridas pelo sistema ainda não usadas pelo usuário",
+)
+def list_category_suggestions(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> list[CategorySuggestion]:
+    existing_keys = {
+        row[0]
+        for row in db.query(Category.system_key)
+        .filter(Category.user_id == current_user.id, Category.system_key.isnot(None))
+        .all()
+    }
+    return [CategorySuggestion(**s) for s in SYSTEM_SUGGESTIONS if s["key"] not in existing_keys]
+
+
+@router.post(
+    "/categories/suggestions/{key}",
+    response_model=CategoryOut,
+    summary="Ativar uma categoria sugerida (idempotente)",
+)
+def accept_category_suggestion(
+    key: str,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+) -> CategoryOut:
+    suggestion = next((s for s in SYSTEM_SUGGESTIONS if s["key"] == key), None)
+    if suggestion is None:
+        raise HTTPException(status_code=404, detail="Sugestão não encontrada.")
+
+    existing = (
+        db.query(Category)
+        .filter(Category.user_id == current_user.id, Category.system_key == key)
+        .first()
+    )
+    if existing:
+        return existing
+
+    category = Category(
+        user_id=current_user.id,
+        name=suggestion["name"],
+        scope="global",
+        system_key=key,
+        applies_to_bank=True,
+        applies_to_credit_card=True,
+        icon=suggestion.get("icon"),
+    )
+    db.add(category)
+    db.commit()
+    db.refresh(category)
+    return category
 
 
 @router.post("/categories", response_model=CategoryOut, summary="Criar categoria")

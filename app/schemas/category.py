@@ -78,7 +78,15 @@ class CategoryUpdate(BaseModel):
 class CategoryOut(CategoryBase):
     id: int
     user_id: int
+    system_key: str | None = None
     created_at: datetime
     updated_at: datetime
 
     model_config = {"from_attributes": True}
+
+
+class CategorySuggestion(BaseModel):
+    key: str
+    name: str
+    description: str
+    icon: str | None = None

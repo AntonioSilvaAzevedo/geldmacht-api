@@ -109,7 +109,14 @@ def annual_card_invoices(db: Session, user_id: int, card_id: int, year: int) -> 
                     break
                 if month in real_by_month:
                     continue
-                sub_sum = round(sum(s.amount for s in active_subs if s.start_month <= month), 2)
+                sub_sum = round(
+                    sum(
+                        s.amount
+                        for s in active_subs
+                        if s.start_month <= month and (s.end_month is None or month <= s.end_month)
+                    ),
+                    2,
+                )
                 if sub_sum > 0:
                     predicted_by_month[month] = round(predicted_by_month.get(month, 0.0) + sub_sum, 2)
 
@@ -195,6 +202,7 @@ def predicted_invoice_composition(
             RecurringExpense.user_id == user_id,
             RecurringExpense.active.is_(True),
             RecurringExpense.start_month <= due_month,
+            (RecurringExpense.end_month.is_(None)) | (RecurringExpense.end_month >= due_month),
         )
         .all()
     )
