@@ -20,6 +20,7 @@ from ..schemas.transaction import (
     TransactionOut,
     TransactionUpdate,
 )
+from ..services.recurrence_service import sync_recurrence_for_transaction
 from ..services.summary_service import calculate_invoice_summary
 from ..services.transaction_serialization import serialize_transaction_out
 
@@ -227,6 +228,7 @@ def update_transaction(
                 detail="Este lançamento é sistêmico e não pode ser categorizado manualmente.",
             )
         _apply_category_patch(db, current_user, tx, body.category_id)
+        sync_recurrence_for_transaction(db, tx)
     db.commit()
     tx_out = (
         db.query(Transaction)

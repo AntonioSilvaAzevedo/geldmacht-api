@@ -12,6 +12,7 @@ class Category(Base):
     user_id    = Column(Integer, ForeignKey("users.id", ondelete="CASCADE"), nullable=False, index=True)
     name       = Column(String(120), nullable=False)
     scope      = Column(String(50), nullable=False, index=True)
+    system_key = Column(String(50), nullable=True, index=True)
     applies_to_bank        = Column(Boolean, nullable=False, server_default="0")
     applies_to_credit_card = Column(Boolean, nullable=False, server_default="0")
     color      = Column(String(20), nullable=True)
