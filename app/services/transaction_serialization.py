@@ -3,6 +3,7 @@
 from app.models.transaction import Transaction
 from app.schemas.tag import TagOut
 from app.schemas.transaction import TransactionOut
+from app.services.bank_movement import classify_movement
 
 
 def serialize_transaction_out(tx: Transaction) -> TransactionOut:
@@ -13,6 +14,13 @@ def serialize_transaction_out(tx: Transaction) -> TransactionOut:
     """
     out = TransactionOut.model_validate(tx)
     out.account_type = tx.account.type if tx.account else None
+    out.movement_type = classify_movement(
+        amount=tx.amount,
+        is_internal_transfer=tx.is_internal_transfer,
+        is_payment=tx.is_payment,
+        transaction_type=tx.transaction_type,
+        description=tx.description,
+    )
     out.tags = [TagOut.model_validate(tag) for tag in tx.tags]
 
     cref = tx.category_ref

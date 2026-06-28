@@ -48,6 +48,7 @@ class TransactionOut(TransactionBase):
     bank_account_id: int | None = None
     source: str | None = None
     transaction_type: str | None = None
+    movement_type: str | None = None   # income | expense | internal_transfer | credit_card_payment
     notes: str | None = None
     source_reference: str | None = None  # FITID / ref. externa (extrato OFX)
     import_batch_id: int | None = None
