@@ -138,6 +138,54 @@ async def upload_statement(
             file_hash=file_hash,
         )
 
+    # ── Ramo fatura OFX ──────────────────────────────────────────────────────
+    is_ofx_file = (
+        filename_lower.endswith((".ofx", ".qfx"))
+        or "ofx" in content_type.lower()
+    )
+    if import_kind == "credit_card_invoice" and is_ofx_file:
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Arquivo vazio.")
+
+        try:
+            raw_meta, raw_txs = parse_bank_statement_ofx(content)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        parsed: list[ParsedTransaction] = []
+        for tx in raw_txs:
+            tx["account"] = "credit_card_ofx"
+            try:
+                parsed.append(ParsedTransaction(**tx))
+            except Exception as exc:
+                logger.warning("Transação OFX de fatura ignorada (schema): %s — %s", tx, exc)
+
+        if not parsed:
+            raise HTTPException(
+                status_code=422,
+                detail="Nenhuma transação válida após validar o OFX.",
+            )
+
+        detected_reference_month = None
+        period_end = (raw_meta or {}).get("period_end")
+        if period_end is not None:
+            detected_reference_month = period_end.strftime("%Y-%m")
+        else:
+            from collections import Counter
+
+            months = Counter(t.date.strftime("%Y-%m") for t in parsed)
+            detected_reference_month = months.most_common(1)[0][0] if months else None
+
+        return UploadResponse(
+            parser_used="credit_card_ofx",
+            source_file=filename,
+            total_transactions=len(parsed),
+            transactions=parsed,
+            import_kind="credit_card_invoice",
+            detected_reference_month=detected_reference_month,
+        )
+
     # ── Fluxo legado PDF / Excel ─────────────────────────────────────────────
     allowed_types = {
         "application/pdf",
