@@ -7,7 +7,7 @@ from ..middleware.auth import get_current_user
 from ..database import get_db
 from ..models.user import User
 from ..parsers import detect_parser
-from ..parsers.ofx_bank_statement import parse_bank_statement_ofx
+from ..parsers.ofx_bank_statement import detect_ofx_kind, parse_bank_statement_ofx
 from ..schemas.transaction import ParsedTransaction, StatementMetadata, UploadResponse
 from ..schemas.import_batch import ExistingImportBatchInfo
 from ..services.bank_statement_import import find_already_imported_batch, sha256_hex
@@ -62,6 +62,15 @@ async def upload_statement(
         content = await file.read()
         if not content:
             raise HTTPException(status_code=400, detail="Arquivo vazio.")
+
+        if detect_ofx_kind(content) == "credit_card":
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Este arquivo OFX parece ser de fatura de cartão de crédito. "
+                    "Para importá-lo, use Importar fatura."
+                ),
+            )
 
         from ..models.bank_account import BankAccount
 
@@ -147,6 +156,15 @@ async def upload_statement(
         content = await file.read()
         if not content:
             raise HTTPException(status_code=400, detail="Arquivo vazio.")
+
+        if detect_ofx_kind(content) == "bank_statement":
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Este arquivo OFX parece ser de extrato de conta corrente. "
+                    "Para importá-lo, use Importar extrato."
+                ),
+            )
 
         try:
             raw_meta, raw_txs = parse_bank_statement_ofx(content)

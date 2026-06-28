@@ -116,6 +116,36 @@ DATA:OFXSGML
 """
 
 
+BANK_OFX = """OFXHEADER:100
+DATA:OFXSGML
+<OFX>
+<BANKMSGSRSV1>
+<STMTTRNRS>
+<STMTRS>
+<CURDEF>BRL</CURDEF>
+<BANKACCTFROM>
+<BANKID>0260</BANKID>
+<ACCTID>1234567-8</ACCTID>
+<ACCTTYPE>CHECKING</ACCTTYPE>
+</BANKACCTFROM>
+<BANKTRANLIST>
+<DTSTART>20260401000000[-3:BRT]</DTSTART>
+<DTEND>20260430000000[-3:BRT]</DTEND>
+<STMTTRN>
+<TRNTYPE>DEBIT</TRNTYPE>
+<DTPOSTED>20260405000000[-3:BRT]</DTPOSTED>
+<TRNAMT>-50.00</TRNAMT>
+<FITID>bk-001</FITID>
+<MEMO>SUPERMERCADO</MEMO>
+</STMTTRN>
+</BANKTRANLIST>
+</STMTRS>
+</STMTTRNRS>
+</BANKMSGSRSV1>
+</OFX>
+"""
+
+
 def _upload(client, headers):
     return client.post(
         "/api/upload",
@@ -123,6 +153,14 @@ def _upload(client, headers):
         files={"file": ("fatura.ofx", CC_OFX.encode("utf-8"), "application/x-ofx")},
         headers=headers,
     )
+
+
+def _bank_account(client, headers) -> dict:
+    return client.post(
+        "/api/bank-accounts",
+        json={"name": "Conta", "institution": "Nubank", "account_type": "checking", "currency": "BRL"},
+        headers=headers,
+    ).json()
 
 
 def test_upload_ofx_invoice_preview(client):
@@ -190,3 +228,39 @@ def test_import_ofx_invoice_requires_card(client, db):
     )
     assert res.status_code == 400, res.text
     assert "art" in res.json()["detail"].lower()
+
+
+def test_detect_ofx_kind_distinguishes_files():
+    from app.parsers.ofx_bank_statement import detect_ofx_kind
+
+    assert detect_ofx_kind(CC_OFX.encode("utf-8")) == "credit_card"
+    assert detect_ofx_kind(BANK_OFX.encode("utf-8")) == "bank_statement"
+
+
+def test_upload_bank_ofx_to_invoice_flow_is_blocked(client, db):
+    user = create_user(db, "ccofx4@test.com", "x", "U")
+    h = _auth(user.email)
+
+    res = client.post(
+        "/api/upload",
+        data={"import_kind": "credit_card_invoice"},
+        files={"file": ("extrato.ofx", BANK_OFX.encode("utf-8"), "application/x-ofx")},
+        headers=h,
+    )
+    assert res.status_code == 422, res.text
+    assert "extrato" in res.json()["detail"].lower()
+
+
+def test_upload_card_ofx_to_statement_flow_is_blocked(client, db):
+    user = create_user(db, "ccofx5@test.com", "x", "U")
+    h = _auth(user.email)
+    acc = _bank_account(client, h)
+
+    res = client.post(
+        "/api/upload",
+        data={"import_kind": "bank_statement", "bank_account_id": str(acc["id"])},
+        files={"file": ("fatura.ofx", CC_OFX.encode("utf-8"), "application/x-ofx")},
+        headers=h,
+    )
+    assert res.status_code == 422, res.text
+    assert "fatura" in res.json()["detail"].lower()
