@@ -20,6 +20,11 @@ _XML_PAIR_RE = re.compile(r"<([A-Za-z0-9_.]+)>\s*([^<]*?)\s*</\1>", re.I | re.S)
 _CC_MARKERS_RE = re.compile(r"(?i)<\s*(?:CREDITCARDMSGSRSV1|CCSTMTRS|CCACCTFROM|CCSTMTTRNRS)\b")
 _BANK_MARKERS_RE = re.compile(r"(?i)<\s*(?:BANKMSGSRSV1|STMTRS|BANKACCTFROM)\b")
 
+# Compra parcelada embutida na descrição: "... - Parcela X/Y"
+_INSTALLMENT_RE = re.compile(r"\s*-\s*Parcela\s+(\d+)/(\d+)\s*$", re.IGNORECASE)
+# Pagamento da própria fatura (crédito sistêmico): "Pagamento recebido", "Pagamento da fatura"
+_INVOICE_PAYMENT_RE = re.compile(r"(?i)pagamento\s+(?:recebid[oa]|efetuad[oa]|d[ae]\s+fatura)")
+
 
 def _decode_ofx(content: bytes) -> str:
     for enc in ("utf-8", "latin-1", "cp1252"):
@@ -168,7 +173,9 @@ def _amount_and_type(trnamt_raw: str, trntype: str | None) -> tuple[float, str]:
     return amount, tt
 
 
-def parse_bank_statement_ofx(content: bytes) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
+def parse_bank_statement_ofx(
+    content: bytes, invoice_context: bool = False
+) -> tuple[dict[str, Any] | None, list[dict[str, Any]]]:
     """
     Extrai metadata do extrato e lista de transações no formato esperado por ParsedTransaction.
 
@@ -233,6 +240,18 @@ def parse_bank_statement_ofx(content: bytes) -> tuple[dict[str, Any] | None, lis
         raw_description = " | ".join(raw_desc_parts).strip() or _description_from_tags(tags)
         description = _description_from_tags(tags)
 
+        installment_current: int | None = None
+        installment_total: int | None = None
+        is_payment = False
+        if invoice_context:
+            inst = _INSTALLMENT_RE.search(description)
+            if inst:
+                installment_current = int(inst.group(1))
+                installment_total = int(inst.group(2))
+                description = _INSTALLMENT_RE.sub("", description).strip()
+            if _INVOICE_PAYMENT_RE.search(description):
+                is_payment = True
+
         fitid = (tags.get("FITID") or "").strip() or None
         trtype = (tags.get("TRNTYPE") or "").strip()
         memo_payload: dict[str, Any] = {}
@@ -255,9 +274,9 @@ def parse_bank_statement_ofx(content: bytes) -> tuple[dict[str, Any] | None, lis
                 "category_id": None,
                 "category_group": None,
                 "is_internal_transfer": False,
-                "is_payment": False,
-                "installment_current": None,
-                "installment_total": None,
+                "is_payment": is_payment,
+                "installment_current": installment_current,
+                "installment_total": installment_total,
             }
         )
 
