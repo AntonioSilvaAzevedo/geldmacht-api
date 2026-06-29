@@ -237,6 +237,102 @@ def test_detect_ofx_kind_distinguishes_files():
     assert detect_ofx_kind(BANK_OFX.encode("utf-8")) == "bank_statement"
 
 
+INSTALLMENT_OFX = """OFXHEADER:100
+DATA:OFXSGML
+<OFX>
+<CREDITCARDMSGSRSV1>
+<CCSTMTRS>
+<BANKTRANLIST>
+<STMTTRN>
+<TRNTYPE>DEBIT
+<DTPOSTED>20260604000000[-3:BRT]
+<TRNAMT>-85.50
+<FITID>x1
+<MEMO>Amazon - Parcela 1/10
+</STMTTRN>
+<STMTTRN>
+<TRNTYPE>DEBIT
+<DTPOSTED>20260604000000[-3:BRT]
+<TRNAMT>-40.90
+<FITID>x2
+<MEMO>Spotify
+</STMTTRN>
+<STMTTRN>
+<TRNTYPE>CREDIT
+<DTPOSTED>20260611000000[-3:BRT]
+<TRNAMT>4576.41
+<FITID>x3
+<MEMO>Pagamento recebido
+</STMTTRN>
+</BANKTRANLIST>
+</CCSTMTRS>
+</CREDITCARDMSGSRSV1>
+</OFX>"""
+
+
+def test_invoice_context_detects_installment_and_payment():
+    from app.parsers.ofx_bank_statement import parse_bank_statement_ofx
+
+    _, txs = parse_bank_statement_ofx(INSTALLMENT_OFX.encode("utf-8"), invoice_context=True)
+    amz = next(t for t in txs if t["amount"] == -85.50)
+    assert amz["installment_current"] == 1
+    assert amz["installment_total"] == 10
+    assert amz["description"] == "Amazon"
+    assert amz["is_payment"] is False
+    pay = next(t for t in txs if t["is_payment"])
+    assert pay["amount"] == 4576.41
+
+
+def test_extrato_context_ignores_installment_and_payment():
+    from app.parsers.ofx_bank_statement import parse_bank_statement_ofx
+
+    _, txs = parse_bank_statement_ofx(INSTALLMENT_OFX.encode("utf-8"), invoice_context=False)
+    assert all(t["installment_total"] is None for t in txs)
+    assert all(t["is_payment"] is False for t in txs)
+    amz = next(t for t in txs if t["amount"] == -85.50)
+    assert amz["description"] == "Amazon - Parcela 1/10"
+
+
+def test_import_ofx_invoice_blocks_category_on_installment(client, db):
+    user = create_user(db, "ccofx6@test.com", "x", "U")
+    h = _auth(user.email)
+    card = _card(client, h)
+
+    preview = client.post(
+        "/api/upload",
+        data={"import_kind": "credit_card_invoice"},
+        files={"file": ("fatura.ofx", INSTALLMENT_OFX.encode("utf-8"), "application/x-ofx")},
+        headers=h,
+    ).json()
+
+    amz = next(t for t in preview["transactions"] if t["amount"] == -85.50)
+    assert amz["installment_current"] == 1 and amz["installment_total"] == 10
+    pay = next(t for t in preview["transactions"] if t.get("is_payment"))
+    assert pay["amount"] == 4576.41
+
+    res = client.post(
+        "/api/import",
+        json={
+            "source_file": "fatura.ofx",
+            "parser_used": "credit_card_ofx",
+            "card_id": card["id"],
+            "import_kind": "credit_card_invoice",
+            "transactions": preview["transactions"],
+        },
+        headers=h,
+    )
+    assert res.status_code == 200, res.text
+    txs = client.get(
+        f"/api/transactions/invoice?invoice_id={res.json()['invoice_id']}",
+        headers=h,
+    ).json()["transactions"]
+    amz_saved = next(t for t in txs if t["amount"] == -85.50)
+    assert amz_saved["installment_total"] == 10
+    assert amz_saved["category_id"] is None
+    pay_saved = next(t for t in txs if t["amount"] == 4576.41)
+    assert pay_saved["transaction_type"] == "payment"
+
+
 def test_upload_bank_ofx_to_invoice_flow_is_blocked(client, db):
     user = create_user(db, "ccofx4@test.com", "x", "U")
     h = _auth(user.email)
