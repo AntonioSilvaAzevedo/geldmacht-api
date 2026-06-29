@@ -46,6 +46,7 @@ _ACCOUNT_META: dict[str, tuple[str, str]] = {
     "nubank_pf":     ("Nubank PF",     "Nubank"),
     "nubank_pj":     ("Nubank PJ",     "Nubank"),
     "nubank_cartao": ("Cartão Nubank", "Nubank"),
+    "credit_card_ofx": ("Cartão de crédito", ""),
     "itau":          ("Itaú Uniclass", "Itaú"),
     "mercado_pago":  ("Mercado Pago",  "Mercado Pago"),
     "b3":            ("B3",            "B3"),
@@ -383,8 +384,14 @@ def import_selected_transactions(
     imported = 0
     skipped  = 0
 
+    is_ofx_invoice = (
+        payload.parser_used == "credit_card_ofx"
+        or any(tx.account == "credit_card_ofx" for tx in payload.transactions)
+    )
     is_card_invoice = (
         payload.parser_used == "faturacartaonubank"
+        or payload.import_kind == "credit_card_invoice"
+        or is_ofx_invoice
         or any(tx.account == "nubank_cartao" for tx in payload.transactions)
     )
     card: CreditCard | None = None
@@ -544,7 +551,7 @@ def import_selected_transactions(
             source_file          = payload.source_file,
             reference_month      = reference_month,
             billing_month        = reference_month,
-            source               = "pdf_invoice_import" if is_card_invoice else None,
+            source               = (("ofx_invoice_import" if is_ofx_invoice else "pdf_invoice_import") if is_card_invoice else None),
             transaction_type     = tx_type,
         )
         db.add(new_tx)

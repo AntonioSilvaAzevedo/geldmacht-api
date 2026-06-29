@@ -16,6 +16,37 @@ _TAG_LINE_RE = re.compile(r"<([A-Za-z0-9_.]+)>\s*([^<\r\n]*?)\s*(?:\r?\n|$)")
 # XML (ex.: Nubank OFX): <TAG>valor</TAG> na mesma linha
 _XML_PAIR_RE = re.compile(r"<([A-Za-z0-9_.]+)>\s*([^<]*?)\s*</\1>", re.I | re.S)
 
+# Marcadores que distinguem extrato de conta (BANK) de fatura de cartão (CC)
+_CC_MARKERS_RE = re.compile(r"(?i)<\s*(?:CREDITCARDMSGSRSV1|CCSTMTRS|CCACCTFROM|CCSTMTTRNRS)\b")
+_BANK_MARKERS_RE = re.compile(r"(?i)<\s*(?:BANKMSGSRSV1|STMTRS|BANKACCTFROM)\b")
+
+
+def _decode_ofx(content: bytes) -> str:
+    for enc in ("utf-8", "latin-1", "cp1252"):
+        try:
+            return content.decode(enc)
+        except UnicodeDecodeError:
+            continue
+    return content.decode("utf-8", errors="replace")
+
+
+def detect_ofx_kind(content: bytes) -> str | None:
+    """
+    Identifica se o OFX é de conta corrente ou cartão de crédito.
+
+    Retorna 'bank_statement', 'credit_card' ou None (ambíguo/desconhecido — não bloqueia).
+    """
+    if not content:
+        return None
+    text = _decode_ofx(content)
+    has_cc = bool(_CC_MARKERS_RE.search(text))
+    has_bank = bool(_BANK_MARKERS_RE.search(text))
+    if has_cc and not has_bank:
+        return "credit_card"
+    if has_bank and not has_cc:
+        return "bank_statement"
+    return None
+
 
 def _parse_ofx_date(raw: str | None) -> date | None:
     if not raw:

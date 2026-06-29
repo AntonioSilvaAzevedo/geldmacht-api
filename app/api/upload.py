@@ -7,7 +7,7 @@ from ..middleware.auth import get_current_user
 from ..database import get_db
 from ..models.user import User
 from ..parsers import detect_parser
-from ..parsers.ofx_bank_statement import parse_bank_statement_ofx
+from ..parsers.ofx_bank_statement import detect_ofx_kind, parse_bank_statement_ofx
 from ..schemas.transaction import ParsedTransaction, StatementMetadata, UploadResponse
 from ..schemas.import_batch import ExistingImportBatchInfo
 from ..services.bank_statement_import import find_already_imported_batch, sha256_hex
@@ -62,6 +62,15 @@ async def upload_statement(
         content = await file.read()
         if not content:
             raise HTTPException(status_code=400, detail="Arquivo vazio.")
+
+        if detect_ofx_kind(content) == "credit_card":
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Este arquivo OFX parece ser de fatura de cartão de crédito. "
+                    "Para importá-lo, use Importar fatura."
+                ),
+            )
 
         from ..models.bank_account import BankAccount
 
@@ -136,6 +145,63 @@ async def upload_statement(
             import_kind="bank_statement",
             statement_metadata=stmt_meta,
             file_hash=file_hash,
+        )
+
+    # ── Ramo fatura OFX ──────────────────────────────────────────────────────
+    is_ofx_file = (
+        filename_lower.endswith((".ofx", ".qfx"))
+        or "ofx" in content_type.lower()
+    )
+    if import_kind == "credit_card_invoice" and is_ofx_file:
+        content = await file.read()
+        if not content:
+            raise HTTPException(status_code=400, detail="Arquivo vazio.")
+
+        if detect_ofx_kind(content) == "bank_statement":
+            raise HTTPException(
+                status_code=422,
+                detail=(
+                    "Este arquivo OFX parece ser de extrato de conta corrente. "
+                    "Para importá-lo, use Importar extrato."
+                ),
+            )
+
+        try:
+            raw_meta, raw_txs = parse_bank_statement_ofx(content)
+        except ValueError as exc:
+            raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+        parsed: list[ParsedTransaction] = []
+        for tx in raw_txs:
+            tx["account"] = "credit_card_ofx"
+            try:
+                parsed.append(ParsedTransaction(**tx))
+            except Exception as exc:
+                logger.warning("Transação OFX de fatura ignorada (schema): %s — %s", tx, exc)
+
+        if not parsed:
+            raise HTTPException(
+                status_code=422,
+                detail="Nenhuma transação válida após validar o OFX.",
+            )
+
+        detected_reference_month = None
+        period_end = (raw_meta or {}).get("period_end")
+        if period_end is not None:
+            detected_reference_month = period_end.strftime("%Y-%m")
+        else:
+            from collections import Counter
+
+            months = Counter(t.date.strftime("%Y-%m") for t in parsed)
+            detected_reference_month = months.most_common(1)[0][0] if months else None
+
+        return UploadResponse(
+            parser_used="credit_card_ofx",
+            source_file=filename,
+            total_transactions=len(parsed),
+            transactions=parsed,
+            import_kind="credit_card_invoice",
+            detected_reference_month=detected_reference_month,
         )
 
     # ── Fluxo legado PDF / Excel ─────────────────────────────────────────────
