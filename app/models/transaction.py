@@ -34,11 +34,16 @@ class Transaction(Base):
     # Conta bancária cadastrada ( âncora para extratos futuros / lançamentos manuais na conta)
     bank_account_id = Column(Integer, ForeignKey("bank_accounts.id", ondelete="SET NULL"), nullable=True, index=True)
 
-    # Origem do lançamento: pdf_invoice_import | bank_statement_import | manual
+    # Origem do lançamento: pdf_invoice_import | ofx_invoice_import | bank_statement_import | manual | system
     source = Column(String(32), nullable=True)
     # Tipo econômico (complementar ao amount assinado): income | expense | transfer | payment | adjustment
     transaction_type = Column(String(32), nullable=True)
     notes = Column(String(500), nullable=True)
+
+    status = Column(String(32), nullable=False, default="confirmed")
+    reconciled_with_transaction_id = Column(
+        Integer, ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True, index=True
+    )
 
     # Referência externa (ex.: FITID do OFX) — dedupe básico na importação de extrato
     source_reference = Column(String(255), nullable=True, index=True)

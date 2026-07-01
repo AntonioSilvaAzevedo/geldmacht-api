@@ -8,9 +8,12 @@ from .summary import InvoiceSummary
 from .invoice import InvoiceMetadata, InvoiceCreate
 from .tag import TagOut
 
-TRANSACTION_SOURCES = frozenset({"pdf_invoice_import", "bank_statement_import", "manual"})
+TRANSACTION_SOURCES = frozenset(
+    {"pdf_invoice_import", "ofx_invoice_import", "bank_statement_import", "manual", "system"}
+)
 TRANSACTION_TYPES = frozenset({"income", "expense", "transfer", "payment", "adjustment"})
 IMPORT_KINDS = frozenset({"credit_card_invoice", "bank_statement"})
+TRANSACTION_STATUSES = frozenset({"pending", "confirmed", "reconciled", "ignored_duplicate"})
 
 
 class ManualLaunchEligibility(BaseModel):
@@ -49,6 +52,8 @@ class TransactionOut(TransactionBase):
     source: str | None = None
     transaction_type: str | None = None
     movement_type: str | None = None   # income | expense | internal_transfer | credit_card_payment
+    status: str | None = None
+    reconciled_with_transaction_id: int | None = None
     notes: str | None = None
     source_reference: str | None = None  # FITID / ref. externa (extrato OFX)
     import_batch_id: int | None = None
