@@ -43,3 +43,7 @@ class TestClassifyMovement:
 
     def test_internal_transfer_takes_priority_over_payment_text(self):
         assert _classify(-2000.0, internal=True, desc="Pagamento de fatura") == INTERNAL_TRANSFER
+
+    def test_reserve_or_investment_movement_classified_as_internal_transfer(self):
+        assert _classify(-500.0, ttype="reserve_or_investment_movement", desc="Aporte caixinha") == INTERNAL_TRANSFER
+        assert _classify(500.0, ttype="reserve_or_investment_movement", desc="Resgate caixinha") == INTERNAL_TRANSFER

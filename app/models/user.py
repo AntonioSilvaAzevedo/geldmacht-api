@@ -27,6 +27,7 @@ class User(Base):
     categories   = relationship("Category",    back_populates="user", cascade="all, delete-orphan")
     invoices     = relationship("Invoice",     back_populates="user", cascade="all, delete-orphan")
     import_batches = relationship("ImportBatch", back_populates="user", cascade="all, delete-orphan")
+    income_sources = relationship("IncomeSource", back_populates="user", cascade="all, delete-orphan")
 
     def __repr__(self) -> str:
         return f"<User {self.email}>"

@@ -28,7 +28,7 @@ def classify_movement(
     transaction_type: str | None,
     description: str | None,
 ) -> str:
-    if is_internal_transfer:
+    if is_internal_transfer or transaction_type == "reserve_or_investment_movement":
         return INTERNAL_TRANSFER
     if is_payment or transaction_type == "payment":
         return CREDIT_CARD_PAYMENT

@@ -32,5 +32,6 @@ class FinancialSummary(BaseModel):
     available_balance: float
     monthly_income: float
     monthly_expenses: float
+    monthly_benefits: float = 0.0
     active_installments_count: int
     future_committed_amount: float
