@@ -11,7 +11,9 @@ from .tag import TagOut
 TRANSACTION_SOURCES = frozenset(
     {"pdf_invoice_import", "ofx_invoice_import", "bank_statement_import", "manual", "system"}
 )
-TRANSACTION_TYPES = frozenset({"income", "expense", "transfer", "payment", "adjustment"})
+TRANSACTION_TYPES = frozenset(
+    {"income", "expense", "transfer", "payment", "adjustment", "reserve_or_investment_movement"}
+)
 IMPORT_KINDS = frozenset({"credit_card_invoice", "bank_statement"})
 TRANSACTION_STATUSES = frozenset({"pending", "confirmed", "reconciled", "ignored_duplicate"})
 
@@ -55,6 +57,9 @@ class TransactionOut(TransactionBase):
     status: str | None = None
     reconciled_with_transaction_id: int | None = None
     affects_summary: bool | None = None
+    income_source_id: int | None = None
+    income_source_name: str | None = None
+    income_source_nature: str | None = None
     notes: str | None = None
     source_reference: str | None = None  # FITID / ref. externa (extrato OFX)
     import_batch_id: int | None = None
@@ -189,6 +194,8 @@ class ManualTransactionCreate(BaseModel):
     category_id: int | None = None
     notes: str | None = Field(None, max_length=500)
     affects_summary: bool = True
+    income_source_id: int | None = None
+    is_reserve_or_investment: bool = False
 
     @model_validator(mode="after")
     def validate_amount_matches_type(self) -> "ManualTransactionCreate":
@@ -213,7 +220,8 @@ class ImportResponse(BaseModel):
 
 
 class TransactionUpdate(BaseModel):
-    """Campos editáveis pelo usuário (descrição e/ou categoria)."""
+    """Campos editáveis pelo usuário (descrição, categoria e/ou fonte de entrada)."""
     description: str | None = None
     category: str | None = None
     category_id: int | None = None
+    income_source_id: int | None = None

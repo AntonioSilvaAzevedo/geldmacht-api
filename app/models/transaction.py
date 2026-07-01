@@ -46,6 +46,10 @@ class Transaction(Base):
     )
     affects_summary = Column(Boolean, nullable=False, default=True)
 
+    income_source_id = Column(
+        Integer, ForeignKey("income_sources.id", ondelete="SET NULL"), nullable=True, index=True
+    )
+
     # Referência externa (ex.: FITID do OFX) — dedupe básico na importação de extrato
     source_reference = Column(String(255), nullable=True, index=True)
     import_batch_id = Column(
@@ -61,6 +65,7 @@ class Transaction(Base):
     invoice        = relationship("Invoice",        back_populates="transactions")
     bank_account   = relationship("BankAccount",    back_populates="transactions")
     import_batch   = relationship("ImportBatch",    back_populates="transactions")
+    income_source  = relationship("IncomeSource",   back_populates="transactions")
     tags           = relationship("Tag", secondary="transaction_tags", back_populates="transactions")
 
     def __repr__(self) -> str:

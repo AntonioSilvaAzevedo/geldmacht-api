@@ -18,6 +18,7 @@ class BankAccount(Base):
     account_type = Column(String(32), nullable=False, server_default="checking")
     currency = Column(String(8), nullable=False, server_default="BRL")
     is_active = Column(Boolean, nullable=False, server_default="1")
+    is_main = Column(Boolean, nullable=False, server_default="0")
 
     created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=False)
     updated_at = Column(DateTime(timezone=True), server_default=func.now(), onupdate=func.now(), nullable=False)

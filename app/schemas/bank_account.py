@@ -3,7 +3,7 @@ from datetime import datetime
 from pydantic import BaseModel, Field, field_validator
 
 VALID_BANK_ACCOUNT_TYPES = frozenset(
-    {"checking", "savings", "payment", "business", "investment", "other"}
+    {"checking", "savings", "payment", "business", "investment", "other", "benefit", "reserve", "cash"}
 )
 
 
@@ -14,6 +14,7 @@ class BankAccountBase(BaseModel):
     account_type: str = Field(default="checking", max_length=32)
     currency: str = Field(default="BRL", max_length=8)
     is_active: bool = True
+    is_main: bool = False
 
     @field_validator("account_type")
     @classmethod
@@ -33,6 +34,7 @@ class BankAccountUpdate(BaseModel):
     account_type: str | None = Field(None, max_length=32)
     currency: str | None = Field(None, max_length=8)
     is_active: bool | None = None
+    is_main: bool | None = None
 
     @field_validator("account_type")
     @classmethod

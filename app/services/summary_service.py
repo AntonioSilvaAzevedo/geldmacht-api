@@ -1,7 +1,7 @@
 import calendar
 from datetime import date
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, joinedload
 
 from app.models.bank_account import BankAccount
 from app.models.credit_card import CreditCard
@@ -128,9 +128,20 @@ def get_financial_summary(
         bank_filters.append(Transaction.bank_account_id.in_(account_ids))
         installment_filters.append(Transaction.card_id.in_(card_ids))
 
-    bank_txs = db.query(Transaction).filter(*bank_filters).all()
-    monthly_income = sum(t.amount for t in bank_txs if t.amount > 0)
-    monthly_expenses = abs(sum(t.amount for t in bank_txs if t.amount < 0))
+    bank_txs = (
+        db.query(Transaction)
+        .options(joinedload(Transaction.income_source))
+        .filter(*bank_filters)
+        .all()
+    )
+
+    def _is_benefit(t: Transaction) -> bool:
+        return t.income_source is not None and t.income_source.nature == "restricted_benefit"
+
+    real_txs = [t for t in bank_txs if t.transaction_type != "reserve_or_investment_movement"]
+    monthly_income = sum(t.amount for t in real_txs if t.amount > 0 and not _is_benefit(t))
+    monthly_expenses = abs(sum(t.amount for t in real_txs if t.amount < 0))
+    monthly_benefits = sum(t.amount for t in real_txs if t.amount > 0 and _is_benefit(t))
 
     installment_txs = db.query(Transaction).filter(*installment_filters).all()
 
@@ -158,6 +169,7 @@ def get_financial_summary(
         available_balance=0.0,
         monthly_income=round(float(monthly_income), 2),
         monthly_expenses=round(float(monthly_expenses), 2),
+        monthly_benefits=round(float(monthly_benefits), 2),
         active_installments_count=active_installments_count,
         future_committed_amount=round(future_committed_amount, 2),
     )

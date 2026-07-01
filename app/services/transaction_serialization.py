@@ -23,6 +23,13 @@ def serialize_transaction_out(tx: Transaction) -> TransactionOut:
     )
     out.tags = [TagOut.model_validate(tag) for tag in tx.tags]
 
+    if tx.income_source is not None:
+        out.income_source_name = tx.income_source.name
+        out.income_source_nature = tx.income_source.nature
+    else:
+        out.income_source_name = None
+        out.income_source_nature = None
+
     cref = tx.category_ref
     if cref is not None:
         out.category_name = cref.name

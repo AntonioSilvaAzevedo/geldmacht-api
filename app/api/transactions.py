@@ -11,6 +11,7 @@ from ..models.account import Account
 from ..models.bank_account import BankAccount
 from ..models.category import Category
 from ..models.credit_card import CreditCard
+from ..models.income_source import IncomeSource
 from ..models.invoice import Invoice
 from ..models.transaction import Transaction
 from ..schemas.transaction import (
@@ -73,6 +74,45 @@ def _apply_category_patch(
     tx.category = category.name
 
 
+def _apply_income_source_patch(
+    db: Session,
+    current_user: User,
+    tx: Transaction,
+    income_source_id: int | None,
+) -> None:
+    """Atualiza income_source_id em tx; levanta HTTPException se inválido."""
+    if income_source_id is None:
+        return
+    if income_source_id == 0:
+        tx.income_source_id = None
+        return
+
+    source = db.query(IncomeSource).filter(
+        IncomeSource.id == income_source_id,
+        IncomeSource.user_id == current_user.id,
+    ).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="Fonte de entrada não encontrada.")
+
+    tx.income_source_id = source.id
+
+
+def _get_owned_income_source_or_none(
+    db: Session,
+    user_id: int,
+    income_source_id: int | None,
+) -> IncomeSource | None:
+    if income_source_id is None:
+        return None
+    source = db.query(IncomeSource).filter(
+        IncomeSource.id == income_source_id,
+        IncomeSource.user_id == user_id,
+    ).first()
+    if not source:
+        raise HTTPException(status_code=404, detail="Fonte de entrada não encontrada.")
+    return source
+
+
 def _build_manual_tx(
     body: ManualTransactionCreate,
     current_user: User,
@@ -101,6 +141,11 @@ def _build_manual_tx(
         if not category:
             raise HTTPException(status_code=404, detail="Categoria não encontrada.")
 
+    income_source = _get_owned_income_source_or_none(db, current_user.id, body.income_source_id)
+    stored_transaction_type = (
+        "reserve_or_investment_movement" if body.is_reserve_or_investment else body.transaction_type
+    )
+
     return Transaction(
         user_id=current_user.id,
         date=body.transaction_date,
@@ -114,10 +159,11 @@ def _build_manual_tx(
         category_id=category.id if category else None,
         category=category.name if category else None,
         category_group=None,
+        income_source_id=income_source.id if income_source else None,
         source="manual",
         status="confirmed",
         affects_summary=body.affects_summary,
-        transaction_type=body.transaction_type,
+        transaction_type=stored_transaction_type,
         notes=body.notes.strip() if body.notes else None,
         source_file=None,
         is_internal_transfer=False,
@@ -136,6 +182,7 @@ def _load_tx_out(tx_id: int, user_id: int, db: Session) -> TransactionOut:
             joinedload(Transaction.account),
             joinedload(Transaction.bank_account),
             joinedload(Transaction.category_ref).joinedload(Category.parent),
+            joinedload(Transaction.income_source),
         )
         .filter(Transaction.id == tx_id, Transaction.user_id == user_id)
         .first()
@@ -200,6 +247,7 @@ def update_transaction(
             joinedload(Transaction.account),
             joinedload(Transaction.bank_account),
             joinedload(Transaction.category_ref).joinedload(Category.parent),
+            joinedload(Transaction.income_source),
         )
         .filter(
             Transaction.id      == tx_id,
@@ -231,6 +279,8 @@ def update_transaction(
             )
         _apply_category_patch(db, current_user, tx, body.category_id)
         sync_recurrence_for_transaction(db, tx)
+    if body.income_source_id is not None:
+        _apply_income_source_patch(db, current_user, tx, body.income_source_id)
     db.commit()
     tx_out = (
         db.query(Transaction)
@@ -238,6 +288,7 @@ def update_transaction(
             joinedload(Transaction.account),
             joinedload(Transaction.bank_account),
             joinedload(Transaction.category_ref).joinedload(Category.parent),
+            joinedload(Transaction.income_source),
         )
         .filter(
             Transaction.id == tx_id,
@@ -271,6 +322,7 @@ def get_invoice_transactions(
         joinedload(Transaction.account),
         joinedload(Transaction.bank_account),
         joinedload(Transaction.category_ref).joinedload(Category.parent),
+        joinedload(Transaction.income_source),
     ).filter(Transaction.user_id == current_user.id)
 
     # ── Busca por invoice_id (prioritária) ───────────────────────────────────
@@ -354,6 +406,7 @@ def list_transactions(
             joinedload(Transaction.account),
             joinedload(Transaction.bank_account),
             joinedload(Transaction.category_ref).joinedload(Category.parent),
+            joinedload(Transaction.income_source),
         )
         .filter(Transaction.user_id == current_user.id)
     )

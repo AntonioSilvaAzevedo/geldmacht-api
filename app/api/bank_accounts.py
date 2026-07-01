@@ -38,6 +38,14 @@ def _validate_month(month: str) -> None:
         raise HTTPException(status_code=422, detail="month deve estar no formato YYYY-MM.")
 
 
+def _unset_other_main_accounts(db: Session, user_id: int, keep_account_id: int) -> None:
+    db.query(BankAccount).filter(
+        BankAccount.user_id == user_id,
+        BankAccount.id != keep_account_id,
+        BankAccount.is_main.is_(True),
+    ).update({BankAccount.is_main: False}, synchronize_session=False)
+
+
 @router.get("/bank-accounts", response_model=list[BankAccountOut], summary="Listar contas bancárias")
 def list_bank_accounts(
     include_inactive: bool = Query(
@@ -105,8 +113,12 @@ def create_bank_account(
         account_type=body.account_type,
         currency=body.currency or "BRL",
         is_active=body.is_active,
+        is_main=body.is_main,
     )
     db.add(acc)
+    db.flush()
+    if body.is_main:
+        _unset_other_main_accounts(db, current_user.id, acc.id)
     db.commit()
     db.refresh(acc)
     return acc
@@ -130,6 +142,10 @@ def patch_bank_account(
         acc.currency = body.currency or "BRL"
     if body.is_active is not None:
         acc.is_active = body.is_active
+    if body.is_main is not None:
+        acc.is_main = body.is_main
+        if body.is_main:
+            _unset_other_main_accounts(db, current_user.id, acc.id)
     db.commit()
     db.refresh(acc)
     return acc
