@@ -44,6 +44,7 @@ class Transaction(Base):
     reconciled_with_transaction_id = Column(
         Integer, ForeignKey("transactions.id", ondelete="SET NULL"), nullable=True, index=True
     )
+    affects_summary = Column(Boolean, nullable=False, default=True)
 
     # Referência externa (ex.: FITID do OFX) — dedupe básico na importação de extrato
     source_reference = Column(String(255), nullable=True, index=True)

@@ -1,5 +1,7 @@
 """CRUD de contas bancárias do usuário ( âncora para lançamentos manuais e futuros extratos )."""
 
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
@@ -7,12 +9,17 @@ from ..database import get_db
 from ..middleware.auth import get_current_user
 from ..models.bank_account import BankAccount
 from ..models.import_batch import ImportBatch
+from ..models.transaction import Transaction
 from ..models.user import User
 from ..schemas.bank_account import BankAccountCreate, BankAccountOut, BankAccountUpdate
 from ..schemas.import_batch import ImportBatchOut
+from ..schemas.month_state import ClearMonthResponse, MonthStateOut
+from ..services.month_state import get_month_bounds, get_month_state
 from .institutions import get_owned_institution
 
 router = APIRouter()
+
+_MONTH_RE = re.compile(r"^\d{4}-\d{2}$")
 
 
 def _get_owned_account(db: Session, user_id: int, account_id: int) -> BankAccount:
@@ -24,6 +31,11 @@ def _get_owned_account(db: Session, user_id: int, account_id: int) -> BankAccoun
     if not acc:
         raise HTTPException(status_code=404, detail="Conta bancária não encontrada.")
     return acc
+
+
+def _validate_month(month: str) -> None:
+    if not _MONTH_RE.match(month):
+        raise HTTPException(status_code=422, detail="month deve estar no formato YYYY-MM.")
 
 
 @router.get("/bank-accounts", response_model=list[BankAccountOut], summary="Listar contas bancárias")
@@ -134,3 +146,47 @@ def delete_bank_account(
     acc.is_active = False
     db.commit()
     return {"deleted": True}
+
+
+@router.get(
+    "/bank-accounts/{account_id}/month-status",
+    response_model=MonthStateOut,
+    summary="Estado do mês (manual/importado) para controlar conflito na conta corrente",
+)
+def get_bank_account_month_status(
+    account_id: int,
+    month: str = Query(..., description="Mês no formato YYYY-MM"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> MonthStateOut:
+    _validate_month(month)
+    _get_owned_account(db, current_user.id, account_id)
+    return MonthStateOut(**get_month_state(db, account_id, month))
+
+
+@router.delete(
+    "/bank-accounts/{account_id}/transactions",
+    response_model=ClearMonthResponse,
+    summary="Limpar lançamentos de um mês da conta corrente",
+)
+def clear_bank_account_month_transactions(
+    account_id: int,
+    month: str = Query(..., description="Mês no formato YYYY-MM"),
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+) -> ClearMonthResponse:
+    _validate_month(month)
+    _get_owned_account(db, current_user.id, account_id)
+    start, end = get_month_bounds(month)
+    deleted = (
+        db.query(Transaction)
+        .filter(
+            Transaction.bank_account_id == account_id,
+            Transaction.user_id == current_user.id,
+            Transaction.date >= start,
+            Transaction.date <= end,
+        )
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return ClearMonthResponse(deleted=deleted, bank_account_id=account_id, month=month)

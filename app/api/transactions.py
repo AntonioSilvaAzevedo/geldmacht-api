@@ -116,6 +116,7 @@ def _build_manual_tx(
         category_group=None,
         source="manual",
         status="confirmed",
+        affects_summary=body.affects_summary,
         transaction_type=body.transaction_type,
         notes=body.notes.strip() if body.notes else None,
         source_file=None,
