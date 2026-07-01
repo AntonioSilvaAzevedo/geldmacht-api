@@ -54,6 +54,7 @@ class TransactionOut(TransactionBase):
     movement_type: str | None = None   # income | expense | internal_transfer | credit_card_payment
     status: str | None = None
     reconciled_with_transaction_id: int | None = None
+    affects_summary: bool | None = None
     notes: str | None = None
     source_reference: str | None = None  # FITID / ref. externa (extrato OFX)
     import_batch_id: int | None = None
@@ -187,6 +188,7 @@ class ManualTransactionCreate(BaseModel):
     bank_account_id: int
     category_id: int | None = None
     notes: str | None = Field(None, max_length=500)
+    affects_summary: bool = True
 
     @model_validator(mode="after")
     def validate_amount_matches_type(self) -> "ManualTransactionCreate":

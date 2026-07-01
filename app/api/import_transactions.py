@@ -32,6 +32,7 @@ from ..services.bank_statement_import import (
     find_already_imported_batch,
     find_duplicate_bank_statement_tx,
 )
+from ..services.month_state import get_month_state
 from ..services.recurrence_service import sync_recurrence_for_transaction
 from ..services.summary_service import calculate_invoice_summary
 from ..services.transaction_serialization import serialize_transaction_out
@@ -175,6 +176,17 @@ def _import_bank_statement(
     if not bacc.is_active:
         raise HTTPException(status_code=400, detail="Conta bancária está desativada.")
 
+    months = sorted({f"{tx.date.year:04d}-{tx.date.month:02d}" for tx in payload.transactions})
+    blocked_months = [m for m in months if get_month_state(db, bacc.id, m)["has_manual"]]
+    if blocked_months:
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"Importação bloqueada: {', '.join(blocked_months)} já tem lançamento manual nesta conta. "
+                "Limpe os lançamentos do mês antes de importar."
+            ),
+        )
+
     if (
         find_already_imported_batch(
             db,
@@ -287,6 +299,7 @@ def _import_bank_statement(
             billing_month=None,
             source="bank_statement_import",
             status="confirmed",
+            affects_summary=True,
             transaction_type=inferred_type,
             source_reference=fit_ref,
             transaction_fingerprint=fingerprint,
@@ -554,6 +567,7 @@ def import_selected_transactions(
             billing_month        = reference_month,
             source               = (("ofx_invoice_import" if is_ofx_invoice else "pdf_invoice_import") if is_card_invoice else None),
             status               = "confirmed",
+            affects_summary      = True,
             transaction_type     = tx_type,
         )
         db.add(new_tx)
