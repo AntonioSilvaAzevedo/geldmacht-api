@@ -151,6 +151,7 @@ class TestManualTransaction:
         data = r.json()
         assert data["amount"] == 100.0
         assert data["source"] == "manual"
+        assert data["status"] == "confirmed"
         assert data["bank_account_id"] == acc["id"]
         assert data["card_id"] is None
         assert data["invoice_id"] is None
@@ -254,6 +255,7 @@ class TestImportKind:
         assert body["transactions"]
         assert body["transactions"][0]["source_reference"] == "fit-1"
         assert body["transactions"][0]["source"] == "bank_statement_import"
+        assert body["transactions"][0]["status"] == "confirmed"
 
     def test_bank_statement_requires_bank_account_id(self, client, db):
         user = create_user(db, "i2@test.com", "x", "I")

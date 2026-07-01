@@ -79,11 +79,12 @@ def _bank_account(db, user_id, institution_id=None) -> BankAccount:
     return acc
 
 
-def _bank_tx(db, user_id, account_id, amount, tx_date, internal=False):
+def _bank_tx(db, user_id, account_id, amount, tx_date, internal=False, status="confirmed"):
     tx = Transaction(
         user_id=user_id, date=tx_date, description="Mov", amount=amount,
         bank_account_id=account_id, imported_at=datetime(2026, 5, 10),
         is_internal_transfer=internal, is_payment=False, source="bank_statement_import",
+        status=status,
     )
     db.add(tx)
     db.commit()
@@ -142,6 +143,19 @@ class TestSummaryEndpoint:
         _bank_tx(db, user.id, acc.id, -300.0, today)
         _bank_tx(db, user.id, acc.id, 500.0, today, internal=True)
         _bank_tx(db, user.id, acc.id, -999.0, prev_month)
+
+        body = client.get("/api/summary", headers=_auth(user.email)).json()
+        assert body["monthly_income"] == 1000.0
+        assert body["monthly_expenses"] == 300.0
+
+    def test_ignored_duplicate_excluded_from_income_and_expenses(self, client, db):
+        user = create_user(db, "s4@test.com", "x", "U")
+        acc = _bank_account(db, user.id)
+        today = date.today()
+        _bank_tx(db, user.id, acc.id, 1000.0, today)
+        _bank_tx(db, user.id, acc.id, -300.0, today)
+        _bank_tx(db, user.id, acc.id, 8500.0, today, status="ignored_duplicate")
+        _bank_tx(db, user.id, acc.id, -200.0, today, status="ignored_duplicate")
 
         body = client.get("/api/summary", headers=_auth(user.email)).json()
         assert body["monthly_income"] == 1000.0

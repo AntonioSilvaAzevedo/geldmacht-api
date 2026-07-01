@@ -286,6 +286,7 @@ def _import_bank_statement(
             reference_month=None,
             billing_month=None,
             source="bank_statement_import",
+            status="confirmed",
             transaction_type=inferred_type,
             source_reference=fit_ref,
             transaction_fingerprint=fingerprint,
@@ -552,6 +553,7 @@ def import_selected_transactions(
             reference_month      = reference_month,
             billing_month        = reference_month,
             source               = (("ofx_invoice_import" if is_ofx_invoice else "pdf_invoice_import") if is_card_invoice else None),
+            status               = "confirmed",
             transaction_type     = tx_type,
         )
         db.add(new_tx)

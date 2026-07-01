@@ -98,6 +98,7 @@ def get_financial_summary(
         Transaction.user_id == user_id,
         Transaction.bank_account_id.isnot(None),
         Transaction.is_internal_transfer.is_(False),
+        Transaction.status != "ignored_duplicate",
         Transaction.date >= start,
         Transaction.date <= end,
     ]
